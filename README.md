@@ -4,7 +4,7 @@ Fewticket Stellar is a NestJS microservice for the Stellar Bridge payment rail s
 It provides secure API endpoints for customer onboarding, virtual account operations,
 and Bridge wallet operations by integrating with Bridge APIs.
 It is designed to communicate with the Fewticket core backend as part of a broader
-payment and banking platform.
+payment and ticket purchasing platform.
 
 ## Current Scope
 
@@ -101,6 +101,52 @@ npm run start:dev
 ```bash
 npm run build
 npm run start:prod
+```
+
+## Docker Deployment
+
+The project includes container deployment files for running the microservice with Redis.
+This does not replace local installation; npm-based setup above remains fully supported.
+
+### Prerequisites
+
+- Docker
+- Docker Compose
+
+### 1. Prepare environment variables
+
+Create or update your .env file in the project root with all required values.
+When running with Docker Compose, Redis host is automatically set to redis by
+docker-compose.yml.
+
+### 2. Build and start containers
+
+```bash
+docker compose up --build -d
+```
+
+### 3. Check running services
+
+```bash
+docker compose ps
+docker compose logs -f app
+```
+
+### 4. Stop containers
+
+```bash
+docker compose down
+```
+
+### Services
+
+- app: NestJS Stellar Bridge microservice (port 5000), running with PM2 Runtime
+- redis: Redis instance used by BullMQ (port 6379)
+
+### Optional cleanup
+
+```bash
+docker compose down -v
 ```
 
 ## API Docs and Operations
