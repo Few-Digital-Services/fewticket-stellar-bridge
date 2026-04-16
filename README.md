@@ -78,6 +78,14 @@ BRIDGE_PRODUCTION_BASE_URL=https://api.bridge.xyz/v0
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 
+# MySQL (TypeORM)
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_USERNAME=root
+DB_PASSWORD=your_mysql_password
+DB_DATABASE=fewticket_stellar
+DB_SYNC=false
+
 # Queue dashboard basic auth
 BULL_DASHBOARD_USER=admin
 BULL_DASHBOARD_PASS=change_me
@@ -107,6 +115,7 @@ npm run start:prod
 
 The project includes container deployment files for running the microservice with Redis.
 This does not replace local installation; npm-based setup above remains fully supported.
+Docker Compose runs the microservice with Redis and MySQL.
 
 ### Prerequisites
 
@@ -116,8 +125,8 @@ This does not replace local installation; npm-based setup above remains fully su
 ### 1. Prepare environment variables
 
 Create or update your .env file in the project root with all required values.
-When running with Docker Compose, Redis host is automatically set to redis by
-docker-compose.yml.
+When running with Docker Compose, Redis host is automatically set to redis and
+MySQL host is automatically set to mysql by docker-compose.yml.
 
 ### 2. Build and start containers
 
@@ -142,6 +151,7 @@ docker compose down
 
 - app: NestJS Stellar Bridge microservice (port 5000), running with PM2 Runtime
 - redis: Redis instance used by BullMQ (port 6379)
+- mysql: MySQL database used by TypeORM (port 3306)
 
 ### Optional cleanup
 
@@ -256,6 +266,9 @@ npm run test:e2e
   - confirm BULL_DASHBOARD_USER and BULL_DASHBOARD_PASS.
 - Redis connection failures:
   - confirm REDIS_HOST and REDIS_PORT and that Redis is running.
+- MySQL connection failures:
+  - confirm DB_HOST, DB_PORT, DB_USERNAME, DB_PASSWORD, and DB_DATABASE.
+  - ensure your MySQL server is running and reachable from the app.
 
 ## Security Notes
 

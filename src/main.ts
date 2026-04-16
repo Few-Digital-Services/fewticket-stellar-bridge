@@ -52,8 +52,8 @@ async function bootstrap() {
 
   // Swagger setup
   const config = new DocumentBuilder()
-    .setTitle('Taxi2cardiff Taxi Portal API')
-    .setDescription('API documentation for Taxi2cardiff Taxi Portal app')
+    .setTitle('Fewticket Stellar Bridge API')
+    .setDescription('API documentation for Fewticket Stellar Bridge app')
     .setVersion('1.0')
     .addBearerAuth(
       {
