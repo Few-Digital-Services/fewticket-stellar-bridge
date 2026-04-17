@@ -2,10 +2,11 @@ import { Module } from '@nestjs/common';
 import { BridgeService } from './bridge.service';
 import { BridgeController } from './bridge.controller';
 import { BridgeClient } from './bridge.client';
-import { AuthService } from 'src/auth/auth.service';
+import { AuthModule } from 'src/auth/auth.module';
 
 @Module({
-  providers: [BridgeService,BridgeClient, AuthService],
+  imports: [AuthModule],
+  providers: [BridgeService, BridgeClient],
   controllers: [BridgeController]
 })
 export class BridgeModule {}

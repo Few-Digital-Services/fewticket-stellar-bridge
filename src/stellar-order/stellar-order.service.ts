@@ -1,17 +1,28 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import Decimal from 'decimal.js';
 import { Repository } from 'typeorm';
 import {
 	StellarOrderEntity,
 	StellarOrderStatus,
 } from './stellar-order.entity';
+import {
+	StellarTransactionEntity,
+	StellarTransactionStatus,
+	StellarTransactionType,
+} from '../stellar-transaction/stellar-transaction.entity';
 import { CreateStellarOrderDto } from './dto/create-stellar-order.dto';
+import { VerifyStellarTransactionDto } from './dto/verify-stellar-transaction.dto';
+import { WebhookJob, WebhookQueue } from '../queue/queue.constants';
+import { WebhookType } from '../webhook/webhook.entity';
 
 type ApplyIncomingPaymentInput = {
 	memo: string;
 	currency: string;
 	amount: string | number;
+	transactionHash?: string;
 };
 
 type ApplyIncomingPaymentResult =
@@ -25,6 +36,10 @@ export class StellarOrderService {
 	constructor(
 		@InjectRepository(StellarOrderEntity)
 		private readonly stellarOrderRepo: Repository<StellarOrderEntity>,
+		@InjectRepository(StellarTransactionEntity)
+		private readonly stellarTransactionRepo: Repository<StellarTransactionEntity>,
+		@InjectQueue(WebhookQueue.name)
+		private readonly webhookQueue: Queue,
 	) {}
 
 	findByMemoOrReference(memo: string) {
@@ -101,13 +116,16 @@ export class StellarOrderService {
 	async markAsPaid(order: StellarOrderEntity) {
 		order.paidAmount = String(order.assetAmount ?? '0');
 		order.status = StellarOrderStatus.PAID;
-		return this.stellarOrderRepo.save(order);
+		const savedOrder = await this.stellarOrderRepo.save(order);
+
+		return savedOrder;
 	}
 
 	async applyIncomingPayment(
 		order: StellarOrderEntity,
 		input: ApplyIncomingPaymentInput,
 	): Promise<ApplyIncomingPaymentResult> {
+		const wasAlreadyPaid = order.status === StellarOrderStatus.PAID;
 		const memo = String(input.memo ?? '').trim();
 		const currency = String(input.currency ?? '').trim().toUpperCase();
 		const expectedCurrency = String(order.currency ?? '').trim().toUpperCase();
@@ -126,7 +144,11 @@ export class StellarOrderService {
         //greater or equal to expected amount is considered paid, even if it's overpaid
 		if (paidAmount.gte(expectedAmount)) {
 			order.status = StellarOrderStatus.PAID;
-			await this.stellarOrderRepo.save(order);
+			const savedOrder = await this.stellarOrderRepo.save(order);
+
+			if (!wasAlreadyPaid && input.transactionHash) {
+				await this.dispatchPaidWebhook(savedOrder, input.transactionHash, memo);
+			}
 			return 'paid';
 		}
 
@@ -140,6 +162,99 @@ export class StellarOrderService {
 		await this.stellarOrderRepo.save(order);
 
 		return 'overpaid';
+	}
+
+	private async dispatchPaidWebhook(
+		order: StellarOrderEntity,
+		transactionHash: string,
+		memo: string,
+	): Promise<void> {
+		await this.webhookQueue.add(
+			WebhookJob.send,
+			{
+				type: WebhookType.STELLAR,
+				reference: order.reference,
+				payload: {
+					reference: order.reference,
+					transaction_hash: transactionHash,
+					memo: memo || order.memo,
+					asset_amount: order.assetAmount,
+					fait_amount: order.faitAmount,
+					asset_currency: order.currency,
+					status: 'paid',
+				},
+			},
+			{
+				attempts: 5,
+				backoff: {
+					type: 'exponential',
+					delay: 2000,
+				},
+				removeOnComplete: true,
+			},
+		);
+	}
+
+	/**
+	 * Verify that a transaction is completed for the given reference
+	 * Called by Laravel before processing tickets
+	 */
+	async verifyTransaction(
+		reference: string,
+		input?: VerifyStellarTransactionDto,
+	) {
+		const order = await this.stellarOrderRepo.findOne({
+			where: { reference },
+		});
+
+		if (!order) {
+			throw new BadRequestException('Order not found');
+		}
+
+		const incomingStatus = String(input?.status ?? '').toLowerCase();
+		if (incomingStatus && !['paid', 'completed'].includes(incomingStatus)) {
+			throw new BadRequestException('Webhook status is not paid/completed');
+		}
+
+		const incomingMemo = String(input?.memo ?? '').trim();
+		if (incomingMemo && incomingMemo !== order.memo && incomingMemo !== order.reference) {
+			throw new BadRequestException('Webhook memo does not match order');
+		}
+
+		if (order.status !== StellarOrderStatus.PAID) {
+			throw new BadRequestException(
+				`Order is not paid. Current status: ${order.status}`,
+			);
+		}
+
+		const incomingHash = String(input?.transaction_hash ?? '').trim();
+		if (incomingHash) {
+			const tx = await this.stellarTransactionRepo.findOne({
+				where: {
+					transactionHash: incomingHash,
+					orderId: order.id,
+					type: StellarTransactionType.CREDIT,
+					status: StellarTransactionStatus.CONFIRMED,
+				},
+			});
+
+			if (!tx) {
+				throw new BadRequestException('Transaction hash not found for order');
+			}
+		}
+
+		return {
+			message: 'Transaction verified successfully',
+			data: {
+				is_valid: true,
+				reference: order.reference,
+				memo: order.memo,
+				status: order.status,
+				asset_amount: order.assetAmount,
+				fait_amount: order.faitAmount,
+				paid_amount: order.paidAmount,
+			},
+		};
 	}
 
 	private async generateUniqueMemo(): Promise<string> {

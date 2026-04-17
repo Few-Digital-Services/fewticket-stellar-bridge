@@ -4,7 +4,7 @@ import { ExpressAdapter } from '@bull-board/express';
 import { createBullBoard } from '@bull-board/api';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { Queue } from 'bullmq';
-import { IncomingTransactionQueue, MailQueue } from './queue.constants';
+import { IncomingTransactionQueue, MailQueue, WebhookQueue } from './queue.constants';
 import { INestApplication } from '@nestjs/common';
 import { BasicAuthMiddleware } from './basic-auth.middleware';
 
@@ -32,10 +32,15 @@ export class QueueDashboardModule implements OnModuleInit {
       connection: redisConnection,
     });
 
+    const webhookQueue = new Queue(WebhookQueue.name, {
+      connection: redisConnection,
+    });
+
     createBullBoard({
       queues: [
         new BullMQAdapter(mailQueue),
         new BullMQAdapter(incomingTransactionQueue),
+        new BullMQAdapter(webhookQueue),
       ],
       serverAdapter: this.serverAdapter,
     });

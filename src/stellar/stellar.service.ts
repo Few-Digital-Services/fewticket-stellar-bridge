@@ -337,7 +337,7 @@ export class StellarService implements OnModuleInit {
 								},
 							},
 							{
-								jobId: `stellar-payment:${String(payment.paging_token ?? payment.transaction_hash)}`,
+								jobId: `stellar-payment-${String(payment.paging_token ?? payment.transaction_hash)}`,
 								removeOnComplete: {
 									count: Number(
 										this.configService.get<string>(

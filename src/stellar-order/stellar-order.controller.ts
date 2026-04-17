@@ -1,7 +1,8 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards, Param } from '@nestjs/common';
 import { StellarOrderService } from './stellar-order.service';
 import { CreateStellarOrderDto } from './dto/create-stellar-order.dto';
-import { SystemOauth2Guard } from 'src/common/guard/systemOauth2.guard';
+import { VerifyStellarTransactionDto } from './dto/verify-stellar-transaction.dto';
+import { SystemOauth2Guard } from '../common/guard/systemOauth2.guard';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -34,5 +35,26 @@ export class StellarOrderController {
 	})
 	createOrder(@Body() dto: CreateStellarOrderDto) {
 		return this.stellarOrderService.createOrder(dto);
+	}
+
+	@Post(':reference/verify-transaction')
+	@ApiOperation({
+		summary: 'Verify transaction for a Stellar order',
+		description:
+			'Verifies that a transaction has been completed for the given order reference. Called by Laravel before processing tickets.',
+	})
+	@ApiResponse({
+		status: 200,
+		description: 'Transaction verified successfully.',
+	})
+	@ApiResponse({
+		status: 400,
+		description: 'Order not found or transaction not verified.',
+	})
+	async verifyTransaction(
+		@Param('reference') reference: string,
+		@Body() dto: VerifyStellarTransactionDto,
+	) {
+		return this.stellarOrderService.verifyTransaction(reference, dto);
 	}
 }
