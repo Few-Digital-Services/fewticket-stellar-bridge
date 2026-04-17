@@ -1,10 +1,10 @@
 version: '3.9'
 
 services:
-  nestjs-app-live:
+  stellar-bridge-live:
     build:
       context: .
-    container_name: nestjs-app-live
+    container_name: stellar-bridge-live
     restart: always
     env_file:
       - .env.live
@@ -15,7 +15,7 @@ services:
       - BRIDGE_ENVIRONMENT=production
       - BASE_URL=${LIVE_BASE_URL:-http://localhost:5000}
       - PORT=5000
-      - PROCESS_NAME=fewticket-stellar-live
+      - PROCESS_NAME=fewticket-stellar-bridge-live
       - DB_HOST=${DB_HOST}
       - DB_PORT=${DB_PORT:-3306}
       - DB_USERNAME=${DB_USERNAME}
@@ -48,10 +48,10 @@ services:
     volumes:
       - uploads_data:/app/uploads
 
-  nestjs-app-sandbox:
+  stellar-bridge-sandbox:
     build:
       context: .
-    container_name: nestjs-app-sandbox
+    container_name: stellar-bridge-sandbox
     restart: always
     env_file:
       - .env.sandbox
@@ -62,7 +62,7 @@ services:
       - BRIDGE_ENVIRONMENT=sandbox
       - BASE_URL=${SANDBOX_BASE_URL:-http://localhost:5001}
       - PORT=5001
-      - PROCESS_NAME=fewticket-stellar-sandbox
+      - PROCESS_NAME=fewticket-stellar-bridge-sandbox
       - DB_HOST=${DB_HOST}
       - DB_PORT=${DB_PORT:-3306}
       - DB_USERNAME=${DB_USERNAME}
