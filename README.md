@@ -128,7 +128,13 @@ npm run start:prod
 
 The project includes container deployment files for running the microservice with Redis.
 This does not replace local installation; npm-based setup above remains fully supported.
-Docker Compose runs the microservice with Redis and MySQL.
+Docker Compose now runs two NestJS instances at the same time:
+
+- nestjs-app-live (production Bridge mode)
+- nestjs-app-sandbox (sandbox Bridge mode)
+
+Both instances share the same Redis container.
+Database is expected to be external and configured via DB_HOST and other DB_* env vars.
 
 ### Prerequisites
 
@@ -137,9 +143,16 @@ Docker Compose runs the microservice with Redis and MySQL.
 
 ### 1. Prepare environment variables
 
-Create or update your .env file in the project root with all required values.
-When running with Docker Compose, Redis host is automatically set to redis and
-MySQL host is automatically set to mysql by docker-compose.yml.
+Create or update these files in the project root:
+
+- .env.live
+- .env.sandbox
+
+When running with Docker Compose, service-to-service networking values are injected automatically:
+
+- REDIS_HOST=redis
+
+Compose sets Redis host to the Redis service and leaves DB_* values from your env files.
 
 ### 2. Build and start containers
 
@@ -147,11 +160,18 @@ MySQL host is automatically set to mysql by docker-compose.yml.
 docker compose up --build -d
 ```
 
+This starts:
+
+- nestjs-app-live on port 5000
+- nestjs-app-sandbox on port 5001
+- redis on port 6379
+
 ### 3. Check running services
 
 ```bash
 docker compose ps
-docker compose logs -f app
+docker compose logs -f nestjs-app-live
+docker compose logs -f nestjs-app-sandbox
 ```
 
 ### 4. Stop containers
@@ -162,9 +182,19 @@ docker compose down
 
 ### Services
 
-- app: NestJS Stellar Bridge microservice (port 5000), running with PM2 Runtime
+- nestjs-app-live: NestJS Stellar Bridge live instance (port 5000), running with PM2 Runtime
+- nestjs-app-sandbox: NestJS Stellar Bridge sandbox instance (port 5001), running with PM2 Runtime
 - redis: Redis instance used by BullMQ (port 6379)
-- mysql: MySQL database used by TypeORM (port 3306)
+
+### Optional: run only one instance
+
+```bash
+# only sandbox + shared infra
+docker compose up --build -d nestjs-app-sandbox redis
+
+# only live + shared infra
+docker compose up --build -d nestjs-app-live redis
+```
 
 ### Optional cleanup
 

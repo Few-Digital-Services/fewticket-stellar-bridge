@@ -1,19 +1,24 @@
-# syntax=docker/dockerfile:1
+# Use official Node.js image
+FROM node:20
 
-FROM node:20-alpine AS deps
+# Set the working directory inside the container
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci
 
-FROM deps AS build
+# Install dependencies
+COPY package*.json ./
+RUN npm install
+
+# Install PM2 globally
+RUN npm install pm2 -g
+
+# Copy all the app files into the container
 COPY . .
+
+# Build the NestJS app
 RUN npm run build
 
-FROM node:20-alpine AS runtime
-WORKDIR /app
-ENV NODE_ENV=production
-COPY package*.json ./
-RUN npm ci --omit=dev && npm install -g pm2 && npm cache clean --force
-COPY --from=build /app/dist ./dist
+# Expose port 5000 (custom NestJS port)
 EXPOSE 5000
-CMD ["pm2-runtime", "dist/main.js", "--name", "fewticket-stellar"]
+
+# Use PM2 to start the app in production mode
+CMD ["pm2-runtime", "dist/main.js"]

@@ -1,50 +1,116 @@
 version: '3.9'
 
 services:
-  app:
+  nestjs-app-live:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: fewticket-stellar-app
-    restart: unless-stopped
+    container_name: nestjs-app-live
+    restart: always
     env_file:
-      - .env
-    environment:
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      DB_HOST: mysql
-      DB_PORT: 3306
-      APP_ENV: production
-      PORT: 5000
+      - .env.live
     ports:
-      - "5000:5000"
+      - "127.0.0.1:5000:5000"
+    environment:
+      - APP_ENV=production
+      - BRIDGE_ENVIRONMENT=production
+      - BASE_URL=${LIVE_BASE_URL:-http://localhost:5000}
+      - PORT=5000
+      - PROCESS_NAME=fewticket-stellar-live
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT:-3306}
+      - DB_USERNAME=${DB_USERNAME}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_SYNC=${DB_SYNC}
+      - DB_DATABASE=${DB_DATABASE}
+      - JWT_SECRET=${JWT_SECRET}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MAIL_HOST=${MAIL_HOST}
+      - MAIL_PORT=${MAIL_PORT}
+      - MAIL_USER=${MAIL_USER}
+      - MAIL_PASS=${MAIL_PASS}
+      - MAIL_FROM=${MAIL_FROM}
+      - BULL_DASHBOARD_USER=${BULL_DASHBOARD_USER}
+      - BULL_DASHBOARD_PASS=${BULL_DASHBOARD_PASS}
+      - STELLAR_PUBLIC_KEY=${STELLAR_PUBLIC_KEY}
+      - STELLAR_SECRET_KEY=${STELLAR_SECRET_KEY}
+      - STELLAR_HORIZON_URL=${STELLAR_HORIZON_URL}
+      - STELLAR_NETWORK=${STELLAR_NETWORK}
+      - LARAVEL_WEBHOOK_URL=${LARAVEL_WEBHOOK_URL}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
     depends_on:
       - redis
-      - mysql
+    networks:
+      - app-network
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    volumes:
+      - uploads_data:/app/uploads
+
+  nestjs-app-sandbox:
+    build:
+      context: .
+    container_name: nestjs-app-sandbox
+    restart: always
+    env_file:
+      - .env.sandbox
+    ports:
+      - "127.0.0.1:5001:5001"
+    environment:
+      - APP_ENV=sandbox
+      - BRIDGE_ENVIRONMENT=sandbox
+      - BASE_URL=${SANDBOX_BASE_URL:-http://localhost:5001}
+      - PORT=5001
+      - PROCESS_NAME=fewticket-stellar-sandbox
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT:-3306}
+      - DB_USERNAME=${DB_USERNAME}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_SYNC=${DB_SYNC}
+      - DB_DATABASE=${DB_DATABASE}
+      - JWT_SECRET=${JWT_SECRET}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MAIL_HOST=${MAIL_HOST}
+      - MAIL_PORT=${MAIL_PORT}
+      - MAIL_USER=${MAIL_USER}
+      - MAIL_PASS=${MAIL_PASS}
+      - MAIL_FROM=${MAIL_FROM}
+      - BULL_DASHBOARD_USER=${BULL_DASHBOARD_USER}
+      - BULL_DASHBOARD_PASS=${BULL_DASHBOARD_PASS}
+      - STELLAR_PUBLIC_KEY=${STELLAR_PUBLIC_KEY}
+      - STELLAR_SECRET_KEY=${STELLAR_SECRET_KEY}
+      - STELLAR_HORIZON_URL=${STELLAR_HORIZON_URL}
+      - STELLAR_NETWORK=${STELLAR_NETWORK}
+      - LARAVEL_WEBHOOK_URL=${LARAVEL_WEBHOOK_URL}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+    depends_on:
+      - redis
+    networks:
+      - app-network
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    volumes:
+      - uploads_data:/app/uploads
 
   redis:
-    image: redis:7-alpine
-    container_name: fewticket-stellar-redis
-    restart: unless-stopped
+    image: redislabs/redismod:latest
+    container_name: redis
+    restart: always
     ports:
       - "6379:6379"
+    networks:
+      - app-network
     volumes:
-      - redis_data:/data
+      - redis-data:/data
 
-  mysql:
-    image: mysql:8.4
-    container_name: fewticket-stellar-mysql
-    restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: fewticket_stellar
-      MYSQL_USER: fewticket
-      MYSQL_PASSWORD: fewticket_pass
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
+networks:
+  app-network:
+    driver: bridge
 
 volumes:
-  redis_data:
-  mysql_data:
+  redis-data:
+    driver: local
+  uploads_data:
