@@ -1,7 +1,14 @@
 import { Body, Controller, Post, Query, Req, UnauthorizedException } from '@nestjs/common';
 import { SkipResponseInterceptor } from 'src/common/interfaces/skip-response-interceptor';
 import { AuthService } from './auth.service';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBody,
+  ApiHeader,
+  ApiOperation,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 
 
 @ApiTags('oauth2')
@@ -11,6 +18,36 @@ export class AuthController {
 constructor(private readonly authService: AuthService) {}
 
 @ApiOperation({ summary: 'Generate an OAuth2 token' })
+@ApiHeader({
+  name: 'Authorization',
+  description: 'Basic base64(clientId:clientSecret) credentials.',
+  required: true,
+})
+@ApiQuery({
+  name: 'grant_type',
+  required: false,
+  example: 'client_credentials',
+  description: 'OAuth2 grant type. Can be supplied as query or request body.',
+})
+@ApiBody({
+  schema: {
+    type: 'object',
+    properties: {
+      grant_type: {
+        type: 'string',
+        example: 'client_credentials',
+      },
+    },
+  },
+})
+@ApiResponse({
+  status: 201,
+  description: 'Bearer token generated successfully.',
+})
+@ApiResponse({
+  status: 401,
+  description: 'Missing or malformed Authorization header.',
+})
 @Post('oauth/token')
   @SkipResponseInterceptor()
   getToken(@Req() req: Request, @Query('grant_type') grantType: string, @Body('grant_type') bodyGrantType: string) {

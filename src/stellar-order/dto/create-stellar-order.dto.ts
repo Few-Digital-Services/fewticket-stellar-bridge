@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNumberString, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsNumber, IsNumberString, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class CreateStellarOrderDto {
   @ApiProperty({ example: 'ORD-20260416-001' })
@@ -12,17 +12,17 @@ export class CreateStellarOrderDto {
     description: 'Backward-compatible alias for fait_amount',
   })
   @IsOptional()
-  @IsNumberString()
-  order_amount?: string;
+  @IsNumber({ maxDecimalPlaces: 6 })
+  order_amount?: number;
 
   @ApiProperty({ example: '150.00' })
   @IsOptional()
-  @IsNumberString()
-  fait_amount?: string;
+  @IsNumber({ maxDecimalPlaces: 6 })
+  fait_amount?: number;
 
   @ApiProperty({ example: '125.348912' })
-  @IsNumberString()
-  asset_amount: string;
+  @IsNumber({ maxDecimalPlaces: 6 })
+  asset_amount: number;
 
   @ApiProperty({ example: 'NGN' })
   @IsString()

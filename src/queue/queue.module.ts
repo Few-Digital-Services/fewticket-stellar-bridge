@@ -1,7 +1,6 @@
-import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { MailProcessor } from './mail.processor';
-import { MailService } from '../mail/mail.service';
 import { MailModule } from '../mail/mail.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
@@ -10,6 +9,7 @@ import { CacheModule } from '@nestjs/cache-manager';
 import { IncomingTransactionQueue, MailQueue } from './queue.constants';
 import { StellarOrderModule } from '../stellar-order/stellar-order.module';
 import { StellarTransactionModule } from '../stellar-transaction/stellar-transaction.module';
+import { WalletModule } from '../wallet/wallet.module';
 
 @Module({
   imports: [
@@ -18,6 +18,7 @@ import { StellarTransactionModule } from '../stellar-transaction/stellar-transac
     JwtModule.register({}),
     StellarOrderModule,
     StellarTransactionModule,
+    WalletModule,
     BullModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -29,6 +30,18 @@ import { StellarTransactionModule } from '../stellar-transaction/stellar-transac
           password: config.get<string>('REDIS_PASSWORD') || undefined,
           db: config.get<number>('REDIS_DB') ?? 0,
            maxRetriesPerRequest: null,
+        },
+        defaultJobOptions: {
+          removeOnComplete: {
+            count: Number(
+              config.get<string>('BULL_DEFAULT_REMOVE_ON_COMPLETE_COUNT', '50'),
+            ),
+          },
+          removeOnFail: {
+            count: Number(
+              config.get<string>('BULL_DEFAULT_REMOVE_ON_FAIL_COUNT', '200'),
+            ),
+          },
         },
       }),
     }),

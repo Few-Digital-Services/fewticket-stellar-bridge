@@ -44,18 +44,17 @@ export class StellarOrderService {
 
 		const memo = await this.generateUniqueMemo();
 
-		const order = this.stellarOrderRepo.create({
-			reference: dto.reference,
-			faitAmount,
-			assetAmount: dto.asset_amount,
-			faitCurrency: dto.fait_currency,
-			currency: 'usdc',
-			network: 'stellar',
-			publicAddress: process.env.STELLAR_PUBLIC_KEY, 
-			memo,
-			paidAmount: '0',
-			status: StellarOrderStatus.PENDING,
-		});
+		const order = new StellarOrderEntity();
+		order.reference = dto.reference;
+		order.faitAmount = String(faitAmount);
+		order.assetAmount = String(dto.asset_amount);
+		order.faitCurrency = dto.fait_currency;
+		order.currency = 'usdc';
+		order.network = 'stellar';
+		order.publicAddress = process.env.STELLAR_PUBLIC_KEY;
+		order.memo = memo;
+		order.paidAmount = '0';
+		order.status = StellarOrderStatus.PENDING;
 
 		const savedOrder = await this.stellarOrderRepo.save(order);
         return {

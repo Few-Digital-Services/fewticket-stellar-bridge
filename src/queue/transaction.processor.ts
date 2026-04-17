@@ -2,8 +2,12 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Horizon } from 'stellar-sdk';
 import { StellarOrderService } from '../stellar-order/stellar-order.service';
+import { StellarTransactionType } from '../stellar-transaction/stellar-transaction.entity';
 import { StellarTransactionService } from '../stellar-transaction/stellar-transaction.service';
+import { WalletService } from '../wallet/wallet.service';
 import {
   IncomingTransactionJob,
   IncomingTransactionQueue,
@@ -11,15 +15,34 @@ import {
 
 
 @Injectable()
-@Processor(IncomingTransactionQueue.name)
+@Processor(IncomingTransactionQueue.name, {
+  concurrency: Number(process.env.BULL_INCOMING_CONCURRENCY ?? 15),
+  limiter: {
+    max: Number(process.env.BULL_INCOMING_RATE_LIMIT_MAX ?? 120),
+    duration: Number(process.env.BULL_INCOMING_RATE_LIMIT_DURATION_MS ?? 1000),
+  },
+})
 export class TransactionProcessor extends WorkerHost {
   private readonly logger = new Logger(TransactionProcessor.name);
+  private readonly server: Horizon.Server;
+  private readonly platformPublic?: string;
 
   constructor(
+    private readonly configService: ConfigService,
     private readonly stellarOrderService: StellarOrderService,
     private readonly stellarTransactionService: StellarTransactionService,
+    private readonly walletService: WalletService,
   ) {
     super();
+
+    this.server = new Horizon.Server(
+      this.configService.get<string>(
+        'STELLAR_HORIZON_URL',
+        'https://horizon-testnet.stellar.org',
+      ),
+    );
+
+    this.platformPublic = this.configService.get<string>('STELLAR_PUBLIC_KEY');
   }
 
   async process(job: Job<any, any, string>) {
@@ -28,8 +51,16 @@ export class TransactionProcessor extends WorkerHost {
       return;
     }
 
-    const { transactionHash, amount, memo, to, network, rawPayload, assetType, assetCode } =
-      job.data;
+    const {
+      transactionHash,
+      amount,
+      from,
+      to,
+      network,
+      rawPayload,
+      assetType,
+      assetCode,
+    } = job.data;
 
     const currency = assetCode
       ? String(assetCode).toUpperCase()
@@ -38,89 +69,129 @@ export class TransactionProcessor extends WorkerHost {
         : 'UNKNOWN';
 
     try {
-      const existing =
-        await this.stellarTransactionService.findByHash(transactionHash);
-
-      if (existing) {
-        this.logger.log(`Transaction already exists: ${transactionHash}`);
+      if (!from || !to || !transactionHash) {
+        this.logger.warn('Skipping malformed payment job payload');
         return;
       }
 
-      if (!memo) {
-        this.logger.warn(
-          `Transaction ${transactionHash} has no memo; skipping order linking`,
-        );
+      const trackedWallets = await this.walletService.findByPublicKeys([
+        String(from),
+        String(to),
+      ]);
+
+      const walletByAddress = new Map(
+        trackedWallets.map((wallet) => [wallet.publicKey, wallet]),
+      );
+
+      const senderWallet = walletByAddress.get(String(from));
+      const receiverWallet = walletByAddress.get(String(to));
+      const isPlatformSender =
+        !!this.platformPublic && String(from) === this.platformPublic;
+      const isPlatformReceiver =
+        !!this.platformPublic && String(to) === this.platformPublic;
+
+      if (
+        !senderWallet &&
+        !receiverWallet &&
+        !isPlatformSender &&
+        !isPlatformReceiver
+      ) {
         return;
       }
 
-      const order = await this.stellarOrderService.findByMemoOrReference(memo);
+      const tx = await this.server
+        .transactions()
+        .transaction(String(transactionHash))
+        .call();
 
-      if (!order) {
-        await this.stellarTransactionService.createConfirmedTransaction({
-          transactionHash,
+      const memo = tx.memo ? String(tx.memo) : undefined;
+
+      let matchedOrderId: string | undefined;
+      if (isPlatformReceiver && memo) {
+        const order = await this.stellarOrderService.findByMemoOrReference(memo);
+        if (order) {
+          matchedOrderId = order.id;
+          await this.stellarOrderService.applyIncomingPayment(order, {
+            memo,
+            currency,
+            amount,
+          });
+        }
+      }
+
+      if (senderWallet) {
+        await this.stellarTransactionService.recordConfirmedMovement({
+          userId: senderWallet.userId,
+          transactionHash: String(transactionHash),
           amount,
+          type: StellarTransactionType.DEBIT,
           currency,
           network,
-          publicAddress: to,
+          publicAddress: senderWallet.publicKey,
+          counterpartyAddress: String(to),
           memo,
           rawPayload,
         });
 
-        this.logger.warn(
-          `No stellar order found for memo/reference: ${memo} (${transactionHash})`,
-        );
-
-        this.logger.log(
-          `Recorded unlinked stellar tx ${transactionHash} with memo ${memo}`,
-        );
-
-        return;
+        await this.walletService.syncWalletBalancesByAddress(senderWallet.publicKey);
       }
 
-      await this.stellarTransactionService.createConfirmedTransaction({
-        orderId: order.id,
-        transactionHash,
-        amount,
-        currency,
-        network,
-        publicAddress: to,
-        memo,
-        rawPayload,
-      });
-
-      const orderUpdateResult = await this.stellarOrderService.applyIncomingPayment(
-        order,
-        {
-          memo,
-          currency,
+      if (receiverWallet) {
+        await this.stellarTransactionService.recordConfirmedMovement({
+          userId: receiverWallet.userId,
+          orderId:
+            isPlatformReceiver && receiverWallet.publicKey === this.platformPublic
+              ? matchedOrderId
+              : undefined,
+          transactionHash: String(transactionHash),
           amount,
-        },
-      );
+          type: StellarTransactionType.CREDIT,
+          currency,
+          network,
+          publicAddress: receiverWallet.publicKey,
+          counterpartyAddress: String(from),
+          memo,
+          rawPayload,
+        });
 
-      if (orderUpdateResult === 'paid') {
-        this.logger.log(
-          `Stellar tx ${transactionHash} linked to order ${order.reference} and marked paid`,
+        await this.walletService.syncWalletBalancesByAddress(
+          receiverWallet.publicKey,
         );
-        return;
       }
 
-      if (orderUpdateResult === 'partial_paid') {
-        this.logger.warn(
-          `Stellar tx ${transactionHash} linked to order ${order.reference} as partial payment`,
-        );
-        return;
+      if (isPlatformSender && !senderWallet && this.platformPublic) {
+        await this.stellarTransactionService.recordConfirmedMovement({
+          transactionHash: String(transactionHash),
+          amount,
+          type: StellarTransactionType.DEBIT,
+          currency,
+          network,
+          publicAddress: this.platformPublic,
+          counterpartyAddress: String(to),
+          memo,
+          rawPayload,
+        });
       }
 
-      if (orderUpdateResult === 'mismatch') {
-        this.logger.warn(
-          `Stellar tx ${transactionHash} linked to order ${order.reference} but memo/currency mismatch prevented paid status`,
-        );
-        return;
+      if (isPlatformReceiver && !receiverWallet && this.platformPublic) {
+        await this.stellarTransactionService.recordConfirmedMovement({
+          orderId: matchedOrderId,
+          transactionHash: String(transactionHash),
+          amount,
+          type: StellarTransactionType.CREDIT,
+          currency,
+          network,
+          publicAddress: this.platformPublic,
+          counterpartyAddress: String(from),
+          memo,
+          rawPayload,
+        });
       }
 
-      this.logger.log(
-        `Stellar tx ${transactionHash} linked to order ${order.reference} but exceeds expected amount`,
-      );
+      this.logger.log(`Processed queued stellar payment ${transactionHash}`);
+
+      return;
+
     } catch (error) {
       this.logger.error(`Failed to process incoming stellar transaction`, error);
       throw error;

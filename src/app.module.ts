@@ -14,6 +14,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { StellarModule } from './stellar/stellar.module';
 import { StellarOrderModule } from './stellar-order/stellar-order.module';
 import { StellarTransactionModule } from './stellar-transaction/stellar-transaction.module';
+import { WalletModule } from './wallet/wallet.module';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { StellarTransactionModule } from './stellar-transaction/stellar-transact
     StellarModule,
     StellarOrderModule,
     StellarTransactionModule,
+    WalletModule,
   ],
   controllers: [AppController],
   providers: [

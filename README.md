@@ -41,6 +41,7 @@ This repository is not yet a complete end-to-end payment system.
 - Bridge module: all Bridge-facing operations.
 - Queue module: async jobs (mail and transaction processing).
 - Queue dashboard module: Bull Board with Basic Auth protection.
+- Incoming Stellar payments are filtered before enqueueing so only tracked addresses are queued.
 - Common module utilities:
   - global response interceptor
   - validation and custom exceptions
@@ -77,6 +78,18 @@ BRIDGE_PRODUCTION_BASE_URL=https://api.bridge.xyz/v0
 # Redis (BullMQ)
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
+
+# Producer-side Stellar address cache refresh interval (ms)
+STELLAR_TRACKED_ADDRESS_REFRESH_MS=30000
+
+# Incoming transaction queue backpressure controls
+BULL_INCOMING_CONCURRENCY=15
+BULL_INCOMING_RATE_LIMIT_MAX=120
+BULL_INCOMING_RATE_LIMIT_DURATION_MS=1000
+BULL_DEFAULT_REMOVE_ON_COMPLETE_COUNT=50
+BULL_DEFAULT_REMOVE_ON_FAIL_COUNT=200
+BULL_INCOMING_REMOVE_ON_COMPLETE_COUNT=50
+BULL_INCOMING_REMOVE_ON_FAIL_COUNT=200
 
 # MySQL (TypeORM)
 DB_HOST=127.0.0.1

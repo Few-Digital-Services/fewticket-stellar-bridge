@@ -2,7 +2,14 @@ import { Body, Controller, Get, Param, Post, Query, UseGuards, UsePipes, Validat
 import { BridgeService } from './bridge.service';
 import { SystemOauth2Guard } from 'src/common/guard/systemOauth2.guard';
 import { SkipResponseInterceptor } from 'src/common/interfaces/skip-response-interceptor';
-import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CreateCustomerDto } from './dto/create-customer-dto';
 import { CreateVirtualAccountDto } from './dto/create-virtual-accountd.dto';
 import { CreateBridgeWalletDto } from './dto/create-bridge-wallet.dto';
@@ -53,6 +60,8 @@ constructor(private readonly bridgeService: BridgeService) {}
 
   @Get('customers/:customerId/wallets/:bridgeWalletId')
   @ApiOperation({ summary: 'Get a bridge wallet for a customer' })
+  @ApiParam({ name: 'customerId', description: 'Bridge customer ID' })
+  @ApiParam({ name: 'bridgeWalletId', description: 'Bridge wallet ID' })
   @ApiResponse({
     status: 200,
     description: 'Bridge wallet retrieved successfully',
@@ -70,6 +79,10 @@ constructor(private readonly bridgeService: BridgeService) {}
   @Get('wallets/:bridgeWalletId/history')
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   @ApiOperation({ summary: 'Get transaction history for a bridge wallet' })
+  @ApiParam({ name: 'bridgeWalletId', description: 'Bridge wallet ID' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Max records to return' })
+  @ApiQuery({ name: 'updatedAfterMs', required: false, description: 'Lower bound unix ms filter' })
+  @ApiQuery({ name: 'updatedBeforeMs', required: false, description: 'Upper bound unix ms filter' })
   @ApiResponse({
     status: 200,
     description: 'Bridge wallet transaction history retrieved successfully',
@@ -89,6 +102,15 @@ constructor(private readonly bridgeService: BridgeService) {}
   @Get('customers/:customerId/virtual-accounts/:virtualAccountId/activity')
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   @ApiOperation({ summary: 'Get activity for a customer virtual account' })
+  @ApiParam({ name: 'customerId', description: 'Bridge customer ID' })
+  @ApiParam({ name: 'virtualAccountId', description: 'Virtual account ID' })
+  @ApiQuery({ name: 'depositId', required: false, description: 'Filter by a single deposit ID' })
+  @ApiQuery({ name: 'depositIds', required: false, description: 'Comma-separated or repeated deposit IDs' })
+  @ApiQuery({ name: 'txHash', required: false, description: 'Filter by blockchain transaction hash' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Max records to return' })
+  @ApiQuery({ name: 'startingAfter', required: false, description: 'Pagination cursor for forward paging' })
+  @ApiQuery({ name: 'endingBefore', required: false, description: 'Pagination cursor for backward paging' })
+  @ApiQuery({ name: 'eventType', required: false, description: 'Filter by event type' })
   @ApiResponse({
     status: 200,
     description: 'Virtual account activity retrieved successfully',
