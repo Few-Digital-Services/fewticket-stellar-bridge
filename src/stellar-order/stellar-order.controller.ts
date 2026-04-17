@@ -10,7 +10,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 
-//@UseGuards(SystemOauth2Guard)
+@UseGuards(SystemOauth2Guard)
 @Controller('stellar-order')
 @ApiTags('Stellar Orders')
 @ApiBearerAuth('access-token')

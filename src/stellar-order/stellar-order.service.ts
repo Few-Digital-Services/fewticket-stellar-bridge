@@ -42,6 +42,29 @@ export class StellarOrderService {
 			throw new BadRequestException('fait amount is required');
 		}
 
+		//unique reference before generating memo to avoid unnecessary db query if reference is not unique
+		const existingReference = await this.stellarOrderRepo.findOne({
+			where: { reference: dto.reference },
+			select: ['id', 'reference', 'memo', 'publicAddress', 'assetAmount', 'faitAmount', 'currency', 'network', 'faitCurrency'],
+		});
+
+		if (existingReference) {
+		  return {
+            message: 'Order created successfully',
+             data:{
+            reference: existingReference.reference,
+            memo: existingReference.memo,
+            public_address: existingReference.publicAddress,
+            asset_amount: existingReference.assetAmount,
+            fait_amount: existingReference.faitAmount,
+            currency: existingReference.currency,
+            network: existingReference.network,
+            fait_currency: existingReference.faitCurrency,
+             }
+
+        };
+		}
+
 		const memo = await this.generateUniqueMemo();
 
 		const order = new StellarOrderEntity();
@@ -100,8 +123,8 @@ export class StellarOrderService {
 		const expectedAmount = new Decimal(String(order.assetAmount ?? '0'));
 
 		order.paidAmount = paidAmount.toFixed(6);
-
-		if (paidAmount.eq(expectedAmount)) {
+        //greater or equal to expected amount is considered paid, even if it's overpaid
+		if (paidAmount.gte(expectedAmount)) {
 			order.status = StellarOrderStatus.PAID;
 			await this.stellarOrderRepo.save(order);
 			return 'paid';

@@ -74,6 +74,10 @@ async function bootstrap() {
     SwaggerModule.setup('api/docs', app, document); // URL: /api/docs
   }
 
-  const start = await app.listen(process.env.PORT ?? 5000);
+  const appEnv = String(process.env.APP_ENV ?? '').toLowerCase();
+  const defaultPort = appEnv === 'sandbox' ? 5001 : 5000;
+  const port = Number(process.env.PORT ?? defaultPort);
+
+  await app.listen(Number.isNaN(port) ? defaultPort : port);
 }
 bootstrap();

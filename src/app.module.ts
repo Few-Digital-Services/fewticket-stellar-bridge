@@ -16,26 +16,45 @@ import { StellarOrderModule } from './stellar-order/stellar-order.module';
 import { StellarTransactionModule } from './stellar-transaction/stellar-transaction.module';
 import { WalletModule } from './wallet/wallet.module';
 
+type RuntimeEnvironment = 'sandbox' | 'live';
+
+const resolveEnvFilePaths = (): string[] => {
+  const rawEnv = String(process.env.APP_ENV ?? 'sandbox').toLowerCase();
+  const runtimeEnv: RuntimeEnvironment = rawEnv === 'live' ? 'live' : 'sandbox';
+
+  return [
+    `.env.${runtimeEnv}`,
+    'src/.env',
+    '.env',
+  ];
+};
+
+const buildDatabaseOptions = (configService: ConfigService) => {
+  const dbPort = Number(configService.get<string>('DB_PORT', '3306'));
+
+  return {
+    type: 'mysql' as const,
+    host: configService.get<string>('DB_HOST', '127.0.0.1'),
+    port: Number.isNaN(dbPort) ? 3306 : dbPort,
+    username: configService.get<string>('DB_USERNAME', 'root'),
+    password: configService.get<string>('DB_PASSWORD', ''),
+    database: configService.get<string>('DB_DATABASE', 'fewticket_stellar'),
+    synchronize: configService.get<string>('DB_SYNC', 'false') === 'true',
+  };
+};
+
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: ['src/.env', '.env'],
+      envFilePath: resolveEnvFilePaths(),
     }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
-        const dbPort = Number(configService.get<string>('DB_PORT', '3306'));
-
         return {
-          type: 'mysql' as const,
-          host: configService.get<string>('DB_HOST', '127.0.0.1'),
-          port: Number.isNaN(dbPort) ? 3306 : dbPort,
-          username: configService.get<string>('DB_USERNAME', 'root'),
-          password: configService.get<string>('DB_PASSWORD', ''),
-          database: configService.get<string>('DB_DATABASE', 'fewticket_stellar'),
+          ...buildDatabaseOptions(configService),
           autoLoadEntities: true,
-          synchronize: configService.get<string>('DB_SYNC', 'false') === 'true',
         };
       },
     }),
