@@ -151,6 +151,7 @@ export class StellarService implements OnModuleInit {
 			txHash,
 		};
 	}
+	
 
 	private async ensureTestnetDestinationAccount(publicKey: string): Promise<void> {
 		if (this.networkPassphrase !== Networks.TESTNET) {
@@ -292,7 +293,6 @@ export class StellarService implements OnModuleInit {
 							}
 							return;
 						}
-
 				
 
 						const from = String(payment.from);
