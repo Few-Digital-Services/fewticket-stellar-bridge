@@ -1,53 +1,157 @@
-# Fewticket Stellar Bridge Microservice
+<div align="center">
 
-Fewticket Stellar is a NestJS microservice for the Stellar Bridge payment rail system.
-It provides secure API endpoints for customer onboarding, virtual account operations,
-and Bridge wallet operations by integrating with Bridge APIs.
-It is designed to communicate with the Fewticket core backend as part of a broader
-payment and ticket purchasing platform.
+# 🌉 Fewticket Stellar Bridge
 
-## Current Scope
+**Blockchain-powered payment infrastructure for the Fewticket platform**
 
-This repository is not yet a complete end-to-end payment system.
+[![NestJS](https://img.shields.io/badge/NestJS-11-E0234E?style=flat-square&logo=nestjs)](https://nestjs.com)
+[![Stellar SDK](https://img.shields.io/badge/Stellar_SDK-latest-7B66FF?style=flat-square&logo=stellar)](https://stellar.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript)](https://typescriptlang.org)
+[![BullMQ](https://img.shields.io/badge/BullMQ-Redis_queues-FF4444?style=flat-square)](https://docs.bullmq.io)
+[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker)](https://docker.com)
 
-- The current implementation focuses on authenticated Bridge integration endpoints.
-- Webhook handling is not yet implemented.
-- The payment listener flow that will use the queue manager is not yet developed.
-- This service is intended to work alongside the Fewticket core backend rather than replace it.
+</div>
 
-## What This Service Does
+---
 
-- Issues OAuth2 access tokens for internal/system-to-system access.
-- Creates and manages Bridge customers.
-- Creates customer virtual accounts.
-- Creates and retrieves Bridge wallets.
-- Retrieves wallet transaction history.
-- Retrieves customer virtual account activity.
-- Exposes queue workers and queue dashboard for background processing.
-- Communicates with the Fewticket core backend for broader platform workflows.
+Fewticket Stellar Bridge is a **NestJS microservice** that connects the Fewticket ticketing platform to the Stellar blockchain and the Bridge payment rail. It handles Stellar wallet lifecycle management, real-time payment listening via the Stellar Horizon API, virtual account provisioning through Bridge, and async job processing with BullMQ — all as a clean, self-contained service that runs alongside the Fewticket core backend.
 
-## Tech Stack
+---
 
-- NestJS 11
-- TypeScript
-- Axios (Bridge API client)
-- BullMQ + Redis
-- Swagger/OpenAPI
-- Class Validator / Class Transformer
+## ✨ Features
 
-## Architecture Summary
+| Capability | Details |
+|---|---|
+| 🔑 **Stellar Wallet Generation** | Generates Ed25519 keypairs via `stellar-sdk` `Keypair.random()` |
+| 📡 **Live Payment Listener** | Streams Stellar Horizon transactions in real time using `Horizon.Server` SSE |
+| 💸 **On-chain Payments** | Builds and submits signed Stellar transactions with `TransactionBuilder` + `Operation.payment` |
+| 🪙 **Multi-asset Support** | Handles native XLM and custom assets (e.g. USDC) with `stellar-sdk` `Asset` |
+| 🌐 **Bridge Integration** | Creates customers, virtual accounts, and Bridge wallets via the Bridge API |
+| 🔁 **Async Job Queues** | BullMQ workers process incoming transactions and mail in the background |
+| 🔐 **OAuth2 Auth** | Client credentials flow secures all internal service-to-service communication |
+| 📊 **Queue Dashboard** | Bull Board UI with Basic Auth at `/admin/queues` |
+| 📝 **Swagger Docs** | Auto-generated OpenAPI docs at `/api/docs` (disabled in production) |
+| 🐳 **Docker Ready** | Compose setup runs live + sandbox instances side-by-side |
 
-- Auth module: OAuth2 client credentials token generation and validation.
-- Bridge module: all Bridge-facing operations.
-- Queue module: async jobs (mail and transaction processing).
-- Queue dashboard module: Bull Board with Basic Auth protection.
-- Incoming Stellar payments are filtered before enqueueing so only tracked addresses are queued.
-- Common module utilities:
-  - global response interceptor
-  - validation and custom exceptions
-  - global throttling
+---
 
-## Getting Started
+## 🔭 Stellar SDK at the Core
+
+This service is built heavily around the **[Stellar JavaScript SDK](https://github.com/stellar/js-stellar-sdk)** (`stellar-sdk`). Here is what it powers:
+
+### Keypair & Wallet Management
+```ts
+import { Keypair } from 'stellar-sdk';
+
+const pair = Keypair.random();
+// pair.publicKey()  → G...  (56-character Stellar address)
+// pair.secret()     → S...  (56-character secret seed)
+```
+Every user wallet is an Ed25519 keypair generated deterministically by the SDK. Public keys serve as the on-chain Stellar address; the secret seed signs transactions.
+
+### Horizon Server — Real-time Transaction Streaming
+```ts
+import { Horizon } from 'stellar-sdk';
+
+const server = new Horizon.Server('https://horizon-testnet.stellar.org');
+
+server.transactions()
+  .forAccount(platformPublicKey)
+  .cursor(resumeCursor)
+  .stream({ onmessage: (tx) => handleIncoming(tx) });
+```
+The service opens a persistent **Server-Sent Events** stream against Horizon. Only operations targeting tracked addresses are forwarded to BullMQ — everything else is dropped at the producer level.
+
+### Building & Submitting Transactions
+```ts
+import { TransactionBuilder, Operation, Asset, Networks, Memo } from 'stellar-sdk';
+
+const tx = new TransactionBuilder(sourceAccount, {
+  fee: BASE_FEE,
+  networkPassphrase: Networks.TESTNET,
+})
+  .addOperation(
+    Operation.payment({
+      destination: recipientPublicKey,
+      asset: new Asset('USDC', usdcIssuerAddress),
+      amount: '25.00',
+    }),
+  )
+  .addMemo(Memo.text('order-12345'))
+  .setTimeout(30)
+  .build();
+
+tx.sign(Keypair.fromSecret(platformSecret));
+await server.submitTransaction(tx);
+```
+Payments are constructed with `TransactionBuilder`, signed locally, and broadcast to the Stellar network via `Horizon.Server.submitTransaction`.
+
+> **How the memo completes ticket checkout**
+>
+> The `Memo.text` field carries the Fewticket **order ID** as a plain text string (up to 28 bytes). When a Stellar payment lands, the Horizon listener reads the memo from the incoming transaction and matches it to a pending order in the Fewticket platform. This lookup triggers the checkout completion flow — whether the customer initiated payment from the **website**, **WhatsApp**, or the **mobile app**. All three surfaces produce the same order ID, so the bridge resolves the correct order and marks the ticket as confirmed regardless of which channel was used.
+
+### Network Selection
+```ts
+import { Networks } from 'stellar-sdk';
+
+// Testnet (default)
+const passphrase = Networks.TESTNET;  // 'Test SDF Network ; September 2015'
+
+// Mainnet
+const passphrase = Networks.PUBLIC;   // 'Public Global Stellar Network ; September 2015'
+```
+Network is selected at startup from `STELLAR_NETWORK` env var. Testnet uses the Friendbot faucet for account funding during development.
+
+---
+
+## 🏗️ Architecture
+
+```
+┌──────────────────────────────────────────────┐
+│              Fewticket Core Backend           │
+└───────────────────┬──────────────────────────┘
+                    │ HTTP (OAuth2 Bearer)
+┌───────────────────▼──────────────────────────┐
+│          Fewticket Stellar Bridge             │
+│                                              │
+│  ┌─────────┐  ┌────────────┐  ┌──────────┐  │
+│  │  Auth   │  │   Bridge   │  │ Stellar  │  │
+│  │ Module  │  │   Module   │  │ Module   │  │
+│  └─────────┘  └────────────┘  └────┬─────┘  │
+│                                    │         │
+│  ┌─────────────────────────────────▼──────┐  │
+│  │         BullMQ Queue Workers           │  │
+│  │  incoming-transactions  |  mail        │  │
+│  └─────────────────────────────────────┬─┘  │
+└────────────────────────────────────────┼────┘
+         │ Horizon SSE stream            │ Jobs
+┌────────▼──────────┐          ┌─────────▼────┐
+│  Stellar Network  │          │    Redis      │
+│  (Horizon API)    │          │  (BullMQ)     │
+└───────────────────┘          └──────────────┘
+```
+
+### Modules
+
+| Module | Responsibility |
+|---|---|
+| **Auth** | OAuth2 client credentials — token issuance and validation |
+| **Stellar** | Wallet generation, Horizon SSE listener, payment submission, tracked-address cache |
+| **Bridge** | Customer creation, virtual accounts, Bridge wallets via Bridge API |
+| **Wallet** | TypeORM entity and persistence for user wallets |
+| **Queue** | BullMQ workers — incoming transaction processing and mail dispatch |
+| **Queue Dashboard** | Bull Board UI protected by Basic Auth |
+| **Common** | Global response interceptor, validation pipe, throttle guard |
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- Node.js 20+
+- Redis
+- MySQL
 
 ### 1. Install dependencies
 
@@ -55,34 +159,39 @@ This repository is not yet a complete end-to-end payment system.
 npm install
 ```
 
-### 2. Configure environment variables
+### 2. Configure environment
 
-Create a .env file in the project root.
+Create a `.env` file in the project root:
 
 ```env
-# App
+# ── App ─────────────────────────────────────────────
 PORT=5000
 APP_ENV=development
 
-# OAuth client credentials
+# ── OAuth (internal auth) ────────────────────────────
 APP_CLIENT_ID=your_client_id
 APP_CLIENT_SECRET=your_client_secret
 
-# Bridge API
+# ── Stellar SDK ──────────────────────────────────────
+STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
+STELLAR_NETWORK=TESTNET                   # or PUBLIC
+STELLAR_PUBLIC_KEY=GABC...               # platform wallet public key
+STELLAR_SECRET_KEY=SABC...               # platform wallet secret key
+STELLAR_USDC_ISSUER=GDEF...              # USDC issuer address on chosen network
+STELLAR_TRACKED_ADDRESS_REFRESH_MS=30000 # address cache TTL (ms)
+
+# ── Bridge API ───────────────────────────────────────
 BRIDGE_ENVIRONMENT=sandbox
 BRIDGE_SANDBOX_API_KEY=your_sandbox_api_key
 BRIDGE_SANDBOX_BASE_URL=https://api.sandbox.bridge.xyz/v0
 BRIDGE_PRODUCTION_API_KEY=your_production_api_key
 BRIDGE_PRODUCTION_BASE_URL=https://api.bridge.xyz/v0
 
-# Redis (BullMQ)
+# ── Redis (BullMQ) ───────────────────────────────────
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 
-# Producer-side Stellar address cache refresh interval (ms)
-STELLAR_TRACKED_ADDRESS_REFRESH_MS=30000
-
-# Incoming transaction queue backpressure controls
+# ── BullMQ tuning ────────────────────────────────────
 BULL_INCOMING_CONCURRENCY=15
 BULL_INCOMING_RATE_LIMIT_MAX=120
 BULL_INCOMING_RATE_LIMIT_DURATION_MS=1000
@@ -91,7 +200,7 @@ BULL_DEFAULT_REMOVE_ON_FAIL_COUNT=200
 BULL_INCOMING_REMOVE_ON_COMPLETE_COUNT=50
 BULL_INCOMING_REMOVE_ON_FAIL_COUNT=200
 
-# MySQL (TypeORM)
+# ── MySQL (TypeORM) ──────────────────────────────────
 DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_USERNAME=root
@@ -99,11 +208,11 @@ DB_PASSWORD=your_mysql_password
 DB_DATABASE=fewticket_stellar
 DB_SYNC=false
 
-# Queue dashboard basic auth
+# ── Queue dashboard ──────────────────────────────────
 BULL_DASHBOARD_USER=admin
 BULL_DASHBOARD_PASS=change_me
 
-# Mail
+# ── Mail ─────────────────────────────────────────────
 MAIL_HOST=smtp.example.com
 MAIL_PORT=587
 MAIL_USER=your_mail_user
@@ -124,105 +233,58 @@ npm run build
 npm run start:prod
 ```
 
-## Docker Deployment
+---
 
-The project includes container deployment files for running the microservice with Redis.
-This does not replace local installation; npm-based setup above remains fully supported.
-Docker Compose now runs two NestJS instances at the same time:
+## 🐳 Docker Deployment
 
-- nestjs-app-live (production Bridge mode)
-- nestjs-app-sandbox (sandbox Bridge mode)
+Docker Compose runs two NestJS instances simultaneously — one for **live** (production Bridge) and one for **sandbox** — sharing a single Redis container. Your MySQL database is expected to be external.
 
-Both instances share the same Redis container.
-Database is expected to be external and configured via DB_HOST and other DB_* env vars.
+### 1. Prepare environment files
 
-### Prerequisites
+Create `.env.live` and `.env.sandbox` in the project root with their respective credentials. Docker Compose automatically injects `REDIS_HOST=redis` for container networking.
 
-- Docker
-- Docker Compose
-
-### 1. Prepare environment variables
-
-Create or update these files in the project root:
-
-- .env.live
-- .env.sandbox
-
-When running with Docker Compose, service-to-service networking values are injected automatically:
-
-- REDIS_HOST=redis
-
-Compose sets Redis host to the Redis service and leaves DB_* values from your env files.
-
-### 2. Build and start containers
+### 2. Build and start
 
 ```bash
 docker compose up --build -d
 ```
 
-This starts:
+| Service | Port | Description |
+|---|---|---|
+| `nestjs-app-live` | 5000 | Production Bridge mode, PM2 Runtime |
+| `nestjs-app-sandbox` | 5001 | Sandbox Bridge mode, PM2 Runtime |
+| `redis` | 6379 | Shared BullMQ Redis instance |
 
-- nestjs-app-live on port 5000
-- nestjs-app-sandbox on port 5001
-- redis on port 6379
-
-### 3. Check running services
+### 3. Useful commands
 
 ```bash
+# Check status
 docker compose ps
+
+# Tail logs
 docker compose logs -f nestjs-app-live
 docker compose logs -f nestjs-app-sandbox
-```
 
-### 4. Stop containers
-
-```bash
-docker compose down
-```
-
-### Services
-
-- nestjs-app-live: NestJS Stellar Bridge live instance (port 5000), running with PM2 Runtime
-- nestjs-app-sandbox: NestJS Stellar Bridge sandbox instance (port 5001), running with PM2 Runtime
-- redis: Redis instance used by BullMQ (port 6379)
-
-### Optional: run only one instance
-
-```bash
-# only sandbox + shared infra
+# Run only one instance
 docker compose up --build -d nestjs-app-sandbox redis
 
-# only live + shared infra
-docker compose up --build -d nestjs-app-live redis
+# Stop and clean up
+docker compose down
+docker compose down -v   # also removes volumes
 ```
 
-### Optional cleanup
+---
 
-```bash
-docker compose down -v
+## 🔌 API Reference
+
+### Authentication
+
+All protected endpoints require a Bearer token obtained via the OAuth2 client credentials flow.
+
+**`POST /oauth/token?grant_type=client_credentials`**
 ```
-
-## API Docs and Operations
-
-- Swagger UI: /api/docs
-- Queue dashboard: /admin/queues
-
-Notes:
-- Swagger is disabled when APP_ENV is production.
-- Queue dashboard is protected by Basic Auth using BULL_DASHBOARD_USER and BULL_DASHBOARD_PASS.
-
-## Authentication Flow
-
-1. Obtain a bearer token from the OAuth endpoint.
-2. Call protected service endpoints with Authorization: Bearer <access_token>.
-
-### Token endpoint
-
-- POST /oauth/token?grant_type=client_credentials
-- Header: Authorization: Basic base64(client_id:client_secret)
-
-Example response:
-
+Authorization: Basic base64(client_id:client_secret)
+```
 ```json
 {
   "access_token": "generated_access_token",
@@ -231,43 +293,22 @@ Example response:
 }
 ```
 
-## Bridge Endpoints in This Service
+### Bridge Endpoints — `/bridge`
 
-Base route: /bridge
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/bridge/customers/create` | Create a Bridge customer |
+| `POST` | `/bridge/customers/create-virtual-account` | Create a customer virtual account |
+| `GET` | `/bridge/customers/:customerId/virtual-accounts/:virtualAccountId/activity` | Virtual account activity |
+| `POST` | `/bridge/customers/create-bridge-wallet` | Create a Bridge wallet |
+| `GET` | `/bridge/customers/:customerId/wallets/:bridgeWalletId` | Get a Bridge wallet |
+| `GET` | `/bridge/wallets/:bridgeWalletId/history` | Bridge wallet transaction history |
 
-### Customer and Virtual Account
+Bridge API reference: [apidocs.bridge.xyz](https://apidocs.bridge.xyz/api-reference/bridge-wallets/create-a-bridge-wallet)
 
-- POST /bridge/customers/create
-  - Create a Bridge customer
-- POST /bridge/customers/create-virtual-account
-  - Create a customer virtual account
-- GET /bridge/customers/:customerId/virtual-accounts/:virtualAccountId/activity
-  - Get customer virtual account activity
+### Response Envelope
 
-### Bridge Wallet
-
-- POST /bridge/customers/create-bridge-wallet
-  - Create a Bridge wallet for a customer
-- GET /bridge/customers/:customerId/wallets/:bridgeWalletId
-  - Get a specific Bridge wallet
-- GET /bridge/wallets/:bridgeWalletId/history
-  - Get transaction history for a Bridge wallet
-
-## Mapping to Bridge API Docs
-
-This microservice integrates with Bridge endpoints such as:
-
-- Create wallet: POST /customers/{customerID}/wallets
-- Get wallet: GET /customers/{customerID}/wallets/{bridgeWalletID}
-- Wallet history: GET /wallets/{bridgeWalletID}/history
-- Virtual account activity: GET /customers/{customerID}/virtual_accounts/{virtualAccountID}/history
-
-Reference docs:
-- https://apidocs.bridge.xyz/api-reference/bridge-wallets/create-a-bridge-wallet
-
-## Response Shape
-
-Most endpoints are wrapped by a global response interceptor and return:
+All responses are wrapped by a global interceptor:
 
 ```json
 {
@@ -277,17 +318,29 @@ Most endpoints are wrapped by a global response interceptor and return:
 }
 ```
 
-Endpoints decorated to skip the interceptor return raw payloads.
+Endpoints that opt out of the interceptor return their raw Bridge/Stellar payloads directly.
 
-## Scripts
+### Developer Tools
+
+| URL | Description |
+|---|---|
+| `/api/docs` | Swagger UI — disabled when `APP_ENV=production` |
+| `/admin/queues` | Bull Board queue dashboard — Basic Auth protected |
+
+---
+
+## 🧪 Scripts
 
 ```bash
-# Run
-npm run start
-npm run start:dev
+# Development
+npm run start           # start normally
+npm run start:dev       # watch mode
+
+# Production
+npm run build
 npm run start:prod
 
-# Quality
+# Code quality
 npm run lint
 npm run format
 
@@ -298,27 +351,32 @@ npm run test:cov
 npm run test:e2e
 ```
 
-## Troubleshooting
+---
 
-- Startup fails with DI errors:
-  - verify module imports and provider registration.
-  - avoid using import type for runtime-injected providers.
-- Bridge API errors:
-  - confirm BRIDGE_ENVIRONMENT, API key, and base URL values.
-- Queue dashboard unauthorized:
-  - confirm BULL_DASHBOARD_USER and BULL_DASHBOARD_PASS.
-- Redis connection failures:
-  - confirm REDIS_HOST and REDIS_PORT and that Redis is running.
-- MySQL connection failures:
-  - confirm DB_HOST, DB_PORT, DB_USERNAME, DB_PASSWORD, and DB_DATABASE.
-  - ensure your MySQL server is running and reachable from the app.
+## 🔧 Troubleshooting
 
-## Security Notes
+| Symptom | Fix |
+|---|---|
+| DI / startup errors | Check module imports and provider registration; avoid `import type` for injected classes |
+| Bridge API errors | Verify `BRIDGE_ENVIRONMENT`, API key, and base URL match your account |
+| Queue dashboard 401 | Check `BULL_DASHBOARD_USER` and `BULL_DASHBOARD_PASS` |
+| Redis connection refused | Confirm `REDIS_HOST` / `REDIS_PORT` and that Redis is running |
+| MySQL connection errors | Confirm all `DB_*` vars and that the MySQL server is reachable |
+| Stellar payments not detected | Confirm `STELLAR_PUBLIC_KEY` is set and the Horizon stream is connected |
 
-- Never commit real API keys, credentials, or production secrets.
-- Use separate sandbox and production Bridge credentials.
-- Restrict CORS origins in production deployments.
+---
 
-## License
+## 🔒 Security Notes
+
+- **Never commit** real API keys, Stellar secret seeds, or production credentials to version control.
+- Use **separate** sandbox and production Bridge API keys.
+- Use **separate** `.env.live` and `.env.sandbox` files; never mix them.
+- Restrict `CORS` origins in production deployments.
+- Rotate `BULL_DASHBOARD_PASS` and `APP_CLIENT_SECRET` regularly.
+
+---
+
+## 📄 License
 
 UNLICENSED
+
