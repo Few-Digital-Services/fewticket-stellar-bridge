@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsNumber, Min } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, Min, IsOptional } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { CustomerType } from 'src/common/enums/customer-type.enum';
 
@@ -28,6 +28,32 @@ export class CreateCustomerDto {
   @ApiProperty({ example: 'Doe', description: 'Customer Last Name' })
   @IsString()
   lastName: string;
+
+
+     @ApiProperty({ example: '123 Main St', description: 'Street address' })
+    @IsNotEmpty()
+    @IsString()
+    streetAddress: string;
+
+    @ApiProperty({ example: 'New York', description: 'City' })
+    @IsNotEmpty()
+    @IsString()
+    city: string;
+
+    @ApiProperty({ example: 'NY', description: 'State' })
+    @IsNotEmpty()
+    @IsString()
+    state: string;
+
+    @ApiProperty({ example: '10001', description: 'Postal code' })
+    @IsOptional()
+    @IsString()
+    postalCode: string;
+
+    @ApiProperty({ example: 'USA', description: 'Country' })
+    @IsNotEmpty()
+    @IsString()
+    country: string;
 
 
 }

@@ -9,21 +9,22 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { OrderEntity } from '../order/order.entity';
+import { BridgeVirtualAccountEntity } from 'src/bridge-virtual-account/bridge-virtual-account.entity';
 
-export enum StellarTransactionStatus {
+export enum BridgeTransactionStatus {
   PENDING = 'pending',
   CONFIRMED = 'confirmed',
   FAILED = 'failed',
 }
 
-export enum StellarTransactionType {
+export enum BridgeTransactionType {
   DEBIT = 'debit',
   CREDIT = 'credit',
 }
 
-@Entity({ name: 'stellar_transactions' })
-@Index(['transactionHash', 'publicAddress', 'type'], { unique: true })
-export class StellarTransactionEntity {
+@Entity({ name: 'bridge_transactions' })
+@Index(['transactionReference',  'type'], { unique: true })
+export class BridgeTransactionEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
@@ -42,41 +43,42 @@ export class StellarTransactionEntity {
   @JoinColumn({ name: 'orderId' })
   order?: OrderEntity;
 
+
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  virtualAccountId?: string;
+  @ManyToOne(() => BridgeVirtualAccountEntity, (account) => account.transactions, {
+    nullable: true,
+    onDelete: 'CASCADE',
+  })
+  @JoinColumn({ name: 'virtualAccountId' })
+  virtualAccount?: BridgeVirtualAccountEntity;
+
+
   @Index()
   @Column({ type: 'varchar', length: 140 })
-  transactionHash: string;
+  transactionReference: string;
 
   @Column({
     type: 'enum',
-    enum: StellarTransactionType,
-    default: StellarTransactionType.CREDIT,
+    enum: BridgeTransactionType,
+    default: BridgeTransactionType.CREDIT,
   })
-  type: StellarTransactionType;
+  type: BridgeTransactionType;
 
   @Column({ type: 'decimal', precision: 18, scale: 6 })
   amount: string;
 
-  @Column({ type: 'varchar', length: 10, default: 'USDC' })
+  @Column({ type: 'varchar', length: 10, default: 'USD' })
   currency: string;
 
   @Column({
     type: 'enum',
-    enum: StellarTransactionStatus,
-    default: StellarTransactionStatus.PENDING,
+    enum: BridgeTransactionStatus,
+    default: BridgeTransactionStatus.PENDING,
   })
-  status: StellarTransactionStatus;
+  status: BridgeTransactionStatus;
 
-  @Column({ type: 'varchar', length: 80, nullable: true })
-  network?: string;
-
-  @Column({ name: 'public_address', type: 'varchar', length: 255, nullable: true })
-  publicAddress?: string;
-
-  @Column({ type: 'varchar', length: 255, nullable: true })
-  memo?: string;
-
-  @Column({ name: 'counterparty_address', type: 'varchar', length: 255, nullable: true })
-  counterpartyAddress?: string;
 
   @Column({ type: 'json', nullable: true })
   rawPayload?: Record<string, unknown>;

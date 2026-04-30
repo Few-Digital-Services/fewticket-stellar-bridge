@@ -16,7 +16,7 @@ import { CreateBridgeWalletDto } from './dto/create-bridge-wallet.dto';
 import { GetVirtualAccountActivityDto } from './dto/get-virtual-account-activity.dto';
 import { GetBridgeWalletTransactionHistoryDto } from './dto/get-bridge-wallet-transaction-history.dto';
 
-//@UseGuards(SystemOauth2Guard)
+@UseGuards(SystemOauth2Guard)
 @Controller('bridge')
 @ApiTags('v1/bridge')
 @ApiBearerAuth('access-token')
@@ -26,13 +26,13 @@ constructor(private readonly bridgeService: BridgeService) {}
 
   @Post('customers/create')
   @UsePipes(new ValidationPipe({ whitelist: true }))
-  @ApiOperation({ summary: 'Create a new customer' })
+  @ApiOperation({ summary: 'Create a new individual customer' })
   @ApiResponse({
     status: 200,
     description: 'Customer created successfully',
   })
   async createCustomer(@Body() payload:CreateCustomerDto) {
-    return this.bridgeService.createCustomer(payload);
+    return this.bridgeService.createIndividualCustomer(payload);
   }
 
 

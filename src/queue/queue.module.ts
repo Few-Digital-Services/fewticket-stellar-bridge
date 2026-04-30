@@ -8,7 +8,7 @@ import { TransactionProcessor } from './transaction.processor';
 import { WebhookProcessor } from './webhook.processor';
 import { CacheModule } from '@nestjs/cache-manager';
 import { IncomingTransactionQueue, MailQueue, WebhookQueue } from './queue.constants';
-import { StellarOrderModule } from '../stellar-order/stellar-order.module';
+import { OrderModule } from '../order/order.module';
 import { StellarTransactionModule } from '../stellar-transaction/stellar-transaction.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -23,7 +23,7 @@ import { WebhookService } from '../webhook/webhook.service';
     HttpModule,
     JwtModule.register({}),
     TypeOrmModule.forFeature([WebhookEntity]),
-    StellarOrderModule,
+    OrderModule,
     StellarTransactionModule,
     WalletModule,
     BullModule.forRootAsync({

@@ -3,13 +3,16 @@ import {
   CreateDateColumn,
   Entity,
   Index,
+  JoinColumn,
+  ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
 import { StellarTransactionEntity } from '../stellar-transaction/stellar-transaction.entity';
+import { BridgeVirtualAccountEntity } from 'src/bridge-virtual-account/bridge-virtual-account.entity';
 
-export enum StellarOrderStatus {
+export enum OrderStatus {
   PENDING = 'pending',
   PROCESSING = 'processing',
   PARTIAL_PAID = 'partial_paid',
@@ -19,8 +22,14 @@ export enum StellarOrderStatus {
   EXPIRED = 'expired',
 }
 
+export enum OrderSettlementStatus {
+  PENDING = 'pending',
+  SETTLED = 'settled',
+  FAILED = 'failed',
+}
+
 @Entity({ name: 'stellar_orders' })
-export class StellarOrderEntity {
+export class OrderEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
@@ -60,11 +69,27 @@ export class StellarOrderEntity {
   paidAmount: string;
 
   @Column({
-    type: 'enum',
-    enum: StellarOrderStatus,
-    default: StellarOrderStatus.PENDING,
+    name: 'settlement_amount',
+    type: 'decimal',
+    precision: 18,
+    scale: 6,
+    default: 0,
   })
-  status: StellarOrderStatus;
+  settlementAmount: string;
+
+  @Column({
+    type: 'enum',
+    enum: OrderStatus,
+    default: OrderStatus.PENDING,
+  })
+  status: OrderStatus;
+
+   @Column({
+    type: 'enum',
+    enum: OrderSettlementStatus,
+    default: OrderSettlementStatus.PENDING,
+  })
+  settlementStatus: OrderSettlementStatus;
 
   @Index({ unique: true })
   @Column({ type: 'varchar', length: 8 })
@@ -75,6 +100,21 @@ export class StellarOrderEntity {
 
   @Column({ type: 'varchar', length: 80, default: 'stellar' })
   network: string;
+
+
+
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  virtualAccountId?: string;
+   @ManyToOne(() => BridgeVirtualAccountEntity, (account) => account.orders, {
+      nullable: true,
+      onDelete: 'CASCADE',
+    })
+    @JoinColumn({ name: 'virtualAccountId' })
+    virtualAccount?: BridgeVirtualAccountEntity;
+
+
+
 
   @OneToMany(() => StellarTransactionEntity, (transaction) => transaction.order)
   transactions: StellarTransactionEntity[];

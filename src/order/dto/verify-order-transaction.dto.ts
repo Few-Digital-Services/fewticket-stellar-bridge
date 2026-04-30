@@ -1,7 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsIn, IsOptional, IsString } from 'class-validator';
 
-export class VerifyStellarTransactionDto {
+export class VerifyOrderTransactionDto {
   @ApiPropertyOptional({ example: 'ABC123TXHASH' })
   @IsOptional()
   @IsString()

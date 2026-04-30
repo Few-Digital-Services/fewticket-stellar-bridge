@@ -6,4 +6,8 @@ export enum Currency {
     PYUSD = 'pyusd',
     EURC = 'eurc',
     USDB = 'usdb',
+    USD = 'usd',
+    EUR = 'eur',
+    GBP = 'gbp',
+    CAD = 'cad',
 }

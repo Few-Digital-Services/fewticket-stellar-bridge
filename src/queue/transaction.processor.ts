@@ -4,7 +4,7 @@ import { Job } from 'bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Horizon } from 'stellar-sdk';
-import { StellarOrderService } from '../stellar-order/stellar-order.service';
+import { OrderService } from '../order/order.service';
 import { StellarTransactionType } from '../stellar-transaction/stellar-transaction.entity';
 import { StellarTransactionService } from '../stellar-transaction/stellar-transaction.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -29,7 +29,7 @@ export class TransactionProcessor extends WorkerHost {
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly stellarOrderService: StellarOrderService,
+    private readonly orderService: OrderService,
     private readonly stellarTransactionService: StellarTransactionService,
     private readonly walletService: WalletService,
   ) {
@@ -108,10 +108,10 @@ export class TransactionProcessor extends WorkerHost {
 
       let matchedOrderId: string | undefined;
       if (isPlatformReceiver && memo) {
-        const order = await this.stellarOrderService.findByMemoOrReference(memo);
+        const order = await this.orderService.findByMemoOrReference(memo);
         if (order) {
           matchedOrderId = order.id;
-          await this.stellarOrderService.applyIncomingPayment(order, {
+          await this.orderService.applyIncomingPayment(order, {
             memo,
             currency,
             amount,

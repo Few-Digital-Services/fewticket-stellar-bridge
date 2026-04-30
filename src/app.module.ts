@@ -12,9 +12,12 @@ import { QueueModule } from './queue/queue.module';
 import { QueueDashboardModule } from './queue/queue-dashboard.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { StellarModule } from './stellar/stellar.module';
-import { StellarOrderModule } from './stellar-order/stellar-order.module';
+import { OrderModule } from './order/order.module';
 import { StellarTransactionModule } from './stellar-transaction/stellar-transaction.module';
 import { WalletModule } from './wallet/wallet.module';
+import { BridgeTransactionModule } from './bridge-transaction/bridge-transaction.module';
+import { BridgeVirtualAccountModule } from './bridge-virtual-account/bridge-virtual-account.module';
+import { BridgeWebhookModule } from './bridge-webhook/bridge-webhook.module';
 
 type RuntimeEnvironment = 'sandbox' | 'live';
 
@@ -32,6 +35,11 @@ const resolveEnvFilePaths = (): string[] => {
 const buildDatabaseOptions = (configService: ConfigService) => {
   const dbPort = Number(configService.get<string>('DB_PORT', '3306'));
 
+      const dbAutoSyncRaw = configService.get<string>('DB_SYNC') || '';
+        const dbAutoSync = ['true', '1', 'yes', 'on'].includes(
+          dbAutoSyncRaw.trim().toLowerCase(),
+        );
+
   return {
     type: 'mysql' as const,
     host: configService.get<string>('DB_HOST', '127.0.0.1'),
@@ -39,7 +47,9 @@ const buildDatabaseOptions = (configService: ConfigService) => {
     username: configService.get<string>('DB_USERNAME', 'root'),
     password: configService.get<string>('DB_PASSWORD', ''),
     database: configService.get<string>('DB_DATABASE', 'fewticket_stellar'),
-    synchronize: configService.get<string>('DB_SYNC', 'false') === 'true',
+    synchronize: dbAutoSync,
+    autoLoadEntities: true,
+    migrationsRun: true,
   };
 };
 
@@ -71,9 +81,12 @@ const buildDatabaseOptions = (configService: ConfigService) => {
       ],
     }),
     StellarModule,
-    StellarOrderModule,
+    OrderModule,
     StellarTransactionModule,
     WalletModule,
+    BridgeTransactionModule,
+    BridgeVirtualAccountModule,
+    BridgeWebhookModule,
   ],
   controllers: [AppController],
   providers: [

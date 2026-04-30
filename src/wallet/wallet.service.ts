@@ -11,8 +11,8 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypt
 import { DataSource, In, Repository } from 'typeorm';
 import Decimal from 'decimal.js';
 import { StellarService } from '../stellar/stellar.service';
-import { StellarOrderService } from '../stellar-order/stellar-order.service';
-import { CreateStellarOrderDto } from '../stellar-order/dto/create-stellar-order.dto';
+import { OrderService } from '../order/order.service';
+import { CreateStellarOrderDto } from '../order/dto/create-stellar-order.dto';
 import { WalletEntity, WalletType } from './wallet.entity';
 import { WalletBalanceEntity } from './wallet-balance.entity';
 
@@ -35,7 +35,7 @@ export class WalletService {
     private readonly dataSource: DataSource,
     private readonly configService: ConfigService,
     private readonly stellarService: StellarService,
-    private readonly stellarOrderService: StellarOrderService,
+    private readonly orderService: OrderService,
     @InjectRepository(WalletEntity)
     private readonly walletRepo: Repository<WalletEntity>,
     @InjectRepository(WalletBalanceEntity)
@@ -281,7 +281,7 @@ export class WalletService {
     }
 
     // Create the pending order first to get a unique memo
-    const orderResult = await this.stellarOrderService.createOrder(dto);
+    const orderResult = await this.orderService.createOrder(dto);
     const order = orderResult.data;
 
     const platformPublicKey = this.configService.get<string>('STELLAR_PUBLIC_KEY');

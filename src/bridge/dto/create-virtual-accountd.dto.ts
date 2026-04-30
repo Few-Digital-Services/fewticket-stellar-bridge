@@ -1,5 +1,5 @@
 //create dto for create virtual account read format from create customer dto and modify as needed
-import { IsString, IsNotEmpty, IsNumber, Min } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, Min, IsOptional } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { Currency } from 'src/common/enums/currency.enum';
 import { PaymentRail } from 'src/common/enums/payment-rail.enum';
@@ -30,6 +30,8 @@ export class CreateVirtualAccountDto {
     @IsNotEmpty()
     @IsString()
     destinationPaymentRail: PaymentRail;
+    
+
+ 
 
 }
-

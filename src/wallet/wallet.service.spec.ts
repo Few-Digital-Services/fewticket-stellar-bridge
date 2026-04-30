@@ -7,7 +7,7 @@ import { WalletService } from './wallet.service';
 import { WalletEntity, WalletType } from './wallet.entity';
 import { StellarService } from '../stellar/stellar.service';
 import { WalletBalanceEntity } from './wallet-balance.entity';
-import { StellarOrderService } from '../stellar-order/stellar-order.service';
+import { OrderService } from '../order/order.service';
 
 describe('WalletService', () => {
   let service: WalletService;
@@ -20,7 +20,7 @@ describe('WalletService', () => {
     getWalletBalances: jest.Mock;
     sendPayment: jest.Mock;
   };
-  let stellarOrderService: { createOrder: jest.Mock };
+  let orderService: { createOrder: jest.Mock };
 
   beforeEach(async () => {
     walletRepo = {
@@ -67,7 +67,7 @@ describe('WalletService', () => {
       sendPayment: jest.fn().mockResolvedValue('tx-test-hash-123'),
     };
 
-    stellarOrderService = {
+    orderService = {
       createOrder: jest.fn().mockResolvedValue({
         message: 'Order created successfully',
         data: {
@@ -99,8 +99,8 @@ describe('WalletService', () => {
           useValue: stellarService,
         },
         {
-          provide: StellarOrderService,
-          useValue: stellarOrderService,
+          provide: OrderService,
+          useValue: orderService,
         },
         {
           provide: getRepositoryToken(WalletEntity),
@@ -212,7 +212,7 @@ describe('WalletService', () => {
       currency: 'USDC',
     });
 
-    expect(stellarOrderService.createOrder).toHaveBeenCalledWith(
+    expect(orderService.createOrder).toHaveBeenCalledWith(
       expect.objectContaining({
         reference: 'ORD-12345',
         asset_amount: 10,

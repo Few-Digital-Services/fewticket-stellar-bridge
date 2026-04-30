@@ -11,9 +11,7 @@ export class CreateStellarOrderDto {
     example: '150.00',
     description: 'Backward-compatible alias for fait_amount',
   })
-  @IsOptional()
-  @IsNumber({ maxDecimalPlaces: 6 })
-  order_amount?: number;
+
 
   @ApiProperty({ example: '150.00' })
   @IsOptional()
@@ -29,17 +27,6 @@ export class CreateStellarOrderDto {
   @MaxLength(10)
   fait_currency: string;
 
-//   @ApiPropertyOptional({ example: 'USDC', default: 'usdc' })
-//   @IsOptional()
-//   @IsString()
-//   @MaxLength(10)
-//   currency?: string;
-
-//   @ApiPropertyOptional({ example: 'stellar', default: 'stellar' })
-//   @IsOptional()
-//   @IsString()
-//   @MaxLength(80)
-//   network?: string;
 
 
 }

@@ -7,6 +7,7 @@ import { AuthModule } from 'src/auth/auth.module';
 @Module({
   imports: [AuthModule],
   providers: [BridgeService, BridgeClient],
-  controllers: [BridgeController]
+  controllers: [BridgeController],
+  exports: [BridgeService],
 })
 export class BridgeModule {}
