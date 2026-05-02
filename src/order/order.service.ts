@@ -8,6 +8,7 @@ import {
 	OrderEntity,
 	OrderStatus,
 	OrderSettlementStatus,
+	ServiceType,
 } from './order.entity';
 import {
 	StellarTransactionEntity,
@@ -65,7 +66,7 @@ export class OrderService {
 
 		//unique reference before generating memo to avoid unnecessary db query if reference is not unique
 		const existingReference = await this.orderRepo.findOne({
-			where: { reference: dto.reference, faitCurrency: dto.fait_currency},
+			where: { reference: dto.reference, faitCurrency: dto.fait_currency, serviceType: ServiceType.BRIDGE_VIRTUAL_ACCOUNT },
 			select: ['id', 'reference', 'memo', 'publicAddress', 'assetAmount', 'faitAmount', 'currency', 'network', 'faitCurrency', 'settlementStatus', 'virtualAccount'],
 			relations: ['virtualAccount'],
 		});
@@ -141,6 +142,7 @@ export class OrderService {
 					paidAmount: '0',
 					status: OrderStatus.PENDING,
 					settlementStatus: OrderSettlementStatus.PENDING,
+					serviceType:ServiceType.BRIDGE_VIRTUAL_ACCOUNT,
 					virtualAccount: { id: savedVirtualAccount ? savedVirtualAccount.id : null } as any,
 				});
 
@@ -172,10 +174,11 @@ export class OrderService {
 		if (!faitAmount) {
 			throw new BadRequestException('fait amount is required');
 		}
+	
 
 		//unique reference before generating memo to avoid unnecessary db query if reference is not unique
 		const existingReference = await this.orderRepo.findOne({
-			where: { reference: dto.reference },
+			where: { reference: dto.reference , serviceType: ServiceType.STELLAR },
 			select: ['id', 'reference', 'memo', 'publicAddress', 'assetAmount', 'faitAmount', 'currency', 'network', 'faitCurrency'],
 		});
 
@@ -209,6 +212,7 @@ export class OrderService {
 		order.memo = memo;
 		order.paidAmount = '0';
 		order.status = OrderStatus.PENDING;
+		order.serviceType = ServiceType.STELLAR;
 
 		const savedOrder = await this.orderRepo.save(order);
 		return {

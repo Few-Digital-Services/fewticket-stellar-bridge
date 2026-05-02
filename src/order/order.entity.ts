@@ -27,9 +27,14 @@ export enum OrderSettlementStatus {
   SETTLED = 'settled',
   FAILED = 'failed',
 }
+export enum ServiceType {
+  STELLAR = 'stellar',
+  BRIDGE_VIRTUAL_ACCOUNT = 'bridge_virtual_account',
+}
 
 @Entity({ name: 'stellar_orders' })
-//unique index reference and fait curreny
+//unique index reference and fait curreny ans service type to allow same reference for different services and currencies
+@Index(['reference', 'faitCurrency', 'serviceType'], { unique: true })
 export class OrderEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -77,6 +82,13 @@ export class OrderEntity {
     default: 0,
   })
   settlementAmount: string;
+
+   @Column({
+    type: 'enum',
+    enum: ServiceType,
+    default: ServiceType.STELLAR,
+  })
+  serviceType: ServiceType;
 
   @Column({
     type: 'enum',
