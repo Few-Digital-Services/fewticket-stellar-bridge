@@ -33,6 +33,7 @@ export class StellarService implements OnModuleInit {
 	private readonly server: Horizon.Server;
 	private readonly networkPassphrase: string;
 	private readonly platformPublic?: string;
+	private readonly platformBridgePublic?: string;
 	private readonly trackedAddressRefreshMs: number;
 	private readonly trackedAddressSet = new Set<string>();
 	private lastTrackedAddressRefreshAt = 0;
@@ -58,6 +59,7 @@ export class StellarService implements OnModuleInit {
 			networkName === 'PUBLIC' ? Networks.PUBLIC : Networks.TESTNET;
 
 		this.platformPublic = this.configService.get<string>('STELLAR_PUBLIC_KEY');
+		this.platformBridgePublic = this.configService.get<string>('STELLAR_BRIDGE_PUBLIC_KEY');
 		const refreshMs = Number(
 			this.configService.get<string>('STELLAR_TRACKED_ADDRESS_REFRESH_MS', '30000'),
 		);
@@ -397,6 +399,9 @@ export class StellarService implements OnModuleInit {
 
 		if (this.platformPublic) {
 			this.trackedAddressSet.add(this.platformPublic);
+		}
+		if (this.platformBridgePublic) {
+			this.trackedAddressSet.add(this.platformBridgePublic);
 		}
 
 		this.lastTrackedAddressRefreshAt = now;

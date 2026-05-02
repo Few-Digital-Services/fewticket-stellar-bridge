@@ -65,17 +65,19 @@ export class OrderService {
 
 		//unique reference before generating memo to avoid unnecessary db query if reference is not unique
 		const existingReference = await this.orderRepo.findOne({
-			where: { reference: dto.reference },
+			where: { reference: dto.reference, faitCurrency: dto.fait_currency},
 			select: ['id', 'reference', 'memo', 'publicAddress', 'assetAmount', 'faitAmount', 'currency', 'network', 'faitCurrency', 'settlementStatus', 'virtualAccount'],
 			relations: ['virtualAccount'],
 		});
+
+	
 
 		if (existingReference) {
 			return {
 				message: 'Order created successfully',
 				data: {
 					reference: existingReference.reference,
-					payment_instructions: existingReference?.virtualAccount?.instructions,
+					payment_instructions: existingReference?.virtualAccount?.instructions ? JSON.parse(existingReference.virtualAccount.instructions) : null,
 					memo: existingReference.memo,
 					public_address: existingReference.publicAddress,
 					fait_amount: existingReference.faitAmount,
@@ -88,17 +90,17 @@ export class OrderService {
 		}
 
 		const memo = await this.generateUniqueMemo();
-		const publicAddress = process.env.STELLAR_PUBLIC_KEY;
+		const bridgePublicAddress = process.env.STELLAR_BRIDGE_PUBLIC_KEY;
 		const customerId = process.env.BRIDGE_COMPANY_CUSTOMER_ID!;
 
 		const generateVirtualAccount = await this.bridgeVirtualAccountService.generateVirtualAccountNumberForNewOrder({
 			reference: dto.reference,
 			customerId: customerId,
-			faitCurrency: dto.fait_currency as any,
-			destinationCurrency: 'USDC' as any,
+			faitCurrency: dto.fait_currency?.toLowerCase() as any,
+			destinationCurrency: 'usdc' as any,
 			destinationPaymentRail: 'stellar' as any,
-			blockchainMemo: memo,
-			destinationAddress: publicAddress,
+			blockchainMemo: memo, //81147319
+			destinationAddress: bridgePublicAddress,
 		});
 
 
@@ -112,10 +114,10 @@ export class OrderService {
 					BridgeVirtualAccountEntity,
 					{
 						bridgeVirtualAccount: generateVirtualAccount.id,
-						accountNumber: generateVirtualAccount.instructions?.account_number || generateVirtualAccount.instructions?.bank_account_number || '',
-						bankName: generateVirtualAccount.instructions?.bank_name || '',
-						faitCurrency: generateVirtualAccount.faitCurrency,
-						instructions: generateVirtualAccount.instructions,
+						accountNumber: generateVirtualAccount.payment_instructions?.account_number || generateVirtualAccount.payment_instructions?.bank_account_number || '',
+						bankName: generateVirtualAccount.payment_instructions?.bank_name || '',
+						faitCurrency: dto.fait_currency?.toLowerCase() as any,
+						instructions: JSON.stringify(generateVirtualAccount.payment_instructions),
 						destination: generateVirtualAccount.destination,
 					},
 					['bridgeVirtualAccount'] // conflict column
@@ -134,7 +136,7 @@ export class OrderService {
 					faitCurrency: dto.fait_currency,
 					currency: 'usdc',
 					network: 'stellar',
-					publicAddress: publicAddress,
+					publicAddress: bridgePublicAddress,
 					memo: memo,
 					paidAmount: '0',
 					status: OrderStatus.PENDING,
@@ -148,7 +150,7 @@ export class OrderService {
 					message: 'Order created successfully',
 					data: {
 						reference: savedOrder.reference,
-						payment_instructions: savedOrder?.virtualAccount?.instructions,
+						payment_instructions: savedVirtualAccount && savedVirtualAccount.instructions ? JSON.parse(savedVirtualAccount.instructions) : null,
 						memo: savedOrder.memo,
 						public_address: savedOrder.publicAddress,
 						fait_amount: savedOrder.faitAmount,

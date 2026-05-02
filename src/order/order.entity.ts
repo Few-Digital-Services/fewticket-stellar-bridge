@@ -29,11 +29,12 @@ export enum OrderSettlementStatus {
 }
 
 @Entity({ name: 'stellar_orders' })
+//unique index reference and fait curreny
 export class OrderEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Index({ unique: true })
+ 
   @Column({ type: 'varchar', length: 120 })
   reference: string;
 
@@ -53,7 +54,7 @@ export class OrderEntity {
   })
   assetAmount: string;
 
-  @Column({ name: 'fait_currency', type: 'varchar', length: 10 })
+  @Column({  type: 'varchar', length: 10 })
   faitCurrency: string;
 
   @Column({ type: 'varchar', length: 10, default: 'usdc' })

@@ -92,7 +92,7 @@ export class BridgeService {
             },
         };
 
-        const res = await this.bridgeClient.post(`/customers/${dto.customerId}/virtual_accounts`, `txn-${dto.transactionId}`, body);
+        const res = await this.bridgeClient.post(`/customers/${dto.customerId}/virtual_accounts`, `txn-${dto.transactionId}-${dto.sourceCurrency}`, body);
 
         if (!res || !res.id) {
             return res;
@@ -102,7 +102,7 @@ export class BridgeService {
         const resData = {
             id: res.id,
             customer_id: res.customer_id,
-            instructons: res.source_deposit_instructions,
+            payment_instructions: res.source_deposit_instructions,
             created: res.created_at,
             destination: res.destination,
             status: res.status,
@@ -140,7 +140,7 @@ export class BridgeService {
         const resData = {
             id: res.id,
             customer_id: res.customer_id,
-            instructons: res.source_deposit_instructions,
+            payment_instructions: res.source_deposit_instructions,
             created: res.created_at,
             destination: res.destination,
             status: res.status,
@@ -169,7 +169,7 @@ export class BridgeService {
         const resData = {
             id: res.id,
             customer_id: res.customer_id,
-            instructons: res.source_deposit_instructions,
+            payment_instructions: res.source_deposit_instructions,
             created: res.created_at,
             destination: res.destination,
             status: res.status,
@@ -197,7 +197,7 @@ export class BridgeService {
         const resData = {
             id: res.id,
             customer_id: res.customer_id,
-            instructons: res.source_deposit_instructions,
+            payment_instructions: res.source_deposit_instructions,
             created: res.created_at,
             destination: res.destination,
             status: res.status,

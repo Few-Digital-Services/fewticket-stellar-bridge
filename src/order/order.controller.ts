@@ -39,7 +39,7 @@ export class OrderController {
 		return this.orderService.createOrder(dto);
 	}
 
-	@Post(':reference/verify-transaction')
+	@Post('stellar/:reference/verify-transaction')
 	@ApiOperation({
 		summary: 'Verify transaction for an order',
 		description:
@@ -61,7 +61,7 @@ export class OrderController {
 	}
 
 	
-	@Post('/bridge/virtual-account')
+	@Post('bridge/virtual-account')
 	@ApiOperation({
 		summary: 'Create a Bridge virtual account payment order',
 		description:

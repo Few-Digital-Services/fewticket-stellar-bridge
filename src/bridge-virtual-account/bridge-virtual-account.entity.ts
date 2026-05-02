@@ -27,7 +27,7 @@ export class BridgeVirtualAccountEntity {
   @Column({ type: 'varchar', length: 120, nullable: true })
   bankName?: string;
 
-  @Column({ name: 'fait_currency', type: 'varchar', length: 10, nullable: true })
+  @Column({ type: 'varchar', length: 10, nullable: true })
   faitCurrency: VirtualAccountCurrency;
   
   @Column({ type: 'longtext', nullable: true })
