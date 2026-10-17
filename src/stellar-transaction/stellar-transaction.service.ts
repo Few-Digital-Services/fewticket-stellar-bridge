@@ -85,8 +85,9 @@ export class StellarTransactionService {
       return this.createConfirmedTransaction(payload);
     }
 
-    existing.userId = payload.userId;
-    existing.orderId = payload.orderId;
+    // Never unlink or re-point an existing order link (a replay must not move a credit).
+    existing.userId = existing.userId ?? payload.userId;
+    existing.orderId = existing.orderId ?? payload.orderId;
     existing.amount = String(payload.amount ?? existing.amount);
     existing.currency = payload.currency ?? existing.currency;
     existing.status = StellarTransactionStatus.CONFIRMED;

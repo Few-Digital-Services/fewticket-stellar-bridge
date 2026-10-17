@@ -31,12 +31,19 @@ type ApplyIncomingPaymentInput = {
 	currency: string;
 	amount: string | number;
 	transactionHash?: string;
+	// Receiving account (defaults to the order's public address).
+	to?: string;
+	// Sender account; stored as the counterparty on the credit row.
+	from?: string;
+	network?: string;
+	rawPayload?: Record<string, unknown>;
 };
 
 type ApplyIncomingPaymentResult =
 	| 'paid'
 	| 'partial_paid'
 	| 'mismatch'
+	| 'duplicate'
 	| 'overpaid';
 
 @Injectable()
@@ -231,6 +238,8 @@ export class OrderService {
 				currency: payment.currency,
 				amount: payment.amount,
 				transactionHash: payment.transactionHash,
+				to: payment.to,
+				from: payment.from,
 			};
 
 			await this.applyIncomingPayment(order, paymentInput);
@@ -263,7 +272,7 @@ export class OrderService {
 		//unique reference before generating memo to avoid unnecessary db query if reference is not unique
 		const existingReference = await this.orderRepo.findOne({
 			where: { reference: dto.reference , serviceType: ServiceType.STELLAR },
-			select: ['id', 'reference', 'memo', 'publicAddress', 'assetAmount', 'faitAmount', 'currency', 'network', 'faitCurrency'],
+			select: ['id', 'reference', 'memo', 'publicAddress', 'assetAmount', 'faitAmount', 'currency', 'network', 'faitCurrency', 'status', 'paidAmount', 'serviceType'],
 		});
 
 		if (existingReference) {
@@ -292,63 +301,136 @@ export class OrderService {
 	}
 
 	async markAsPaid(order: OrderEntity) {
-		order.paidAmount = String(order.assetAmount ?? '0');
 		order.status = OrderStatus.PAID;
 		const savedOrder = await this.orderRepo.save(order);
 
 		return savedOrder;
 	}
 
+	/**
+	 * Apply an on-chain payment to an order, idempotently.
+	 *
+	 * Each payment is recorded once as a CREDIT row in stellar_transactions
+	 * (unique on transactionHash + publicAddress + type) linked to the order.
+	 * paid_amount is then recomputed from the SUM of the order's linked credits
+	 * instead of being incremented, so replaying the same payment (listener
+	 * restart, duplicate stream, queue retry, reconcile) never double counts.
+	 * The order row is locked for the duration of the update.
+	 */
 	async applyIncomingPayment(
 		order: OrderEntity,
 		input: ApplyIncomingPaymentInput,
 	): Promise<ApplyIncomingPaymentResult> {
-		const wasAlreadyPaid = order.status === OrderStatus.PAID;
 		const memo = String(input.memo ?? '').trim();
 		const currency = String(input.currency ?? '').trim().toUpperCase();
-		const expectedCurrency = String(order.currency ?? '').trim().toUpperCase();
+		const transactionHash = String(input.transactionHash ?? '').trim();
 
-		const memoMatches = memo === order.reference || memo === order.memo;
-		if (!memoMatches || currency !== expectedCurrency) {
+		// Without a transaction hash a payment cannot be de-duplicated, so it is never counted.
+		if (!transactionHash) {
 			return 'mismatch';
 		}
 
-		const currentPaidAmount = new Decimal(String(order.paidAmount ?? '0'));
-		const incomingPaidAmount = new Decimal(String(input.amount ?? '0'));
-		const paidAmount = currentPaidAmount.plus(incomingPaidAmount);
-		const expectedAmount = new Decimal(String(order.assetAmount ?? '0'));
+		const outcome = await this.dataSource.transaction(async (manager) => {
+			const locked = await manager.getRepository(OrderEntity).findOne({
+				where: { id: order.id },
+				lock: { mode: 'pessimistic_write' },
+			});
 
-		order.paidAmount = paidAmount.toFixed(6);
-		//greater or equal to expected amount is considered paid, even if it's overpaid
-		if (paidAmount.gte(expectedAmount)) {
-			order.status = OrderStatus.PAID;
-			const savedOrder = await this.orderRepo.save(order);
-
-			if (input.transactionHash) {
-				await this.ensurePaidWebhookDispatched(
-					savedOrder,
-					input.transactionHash,
-					memo,
-				);
+			if (!locked) {
+				return { result: 'mismatch' as ApplyIncomingPaymentResult, saved: null as OrderEntity | null, becamePaid: false };
 			}
-			return 'paid';
+
+			const expectedCurrency = String(locked.currency ?? '').trim().toUpperCase();
+			const memoMatches = memo === locked.reference || memo === locked.memo;
+			if (!memoMatches || currency !== expectedCurrency) {
+				return { result: 'mismatch' as ApplyIncomingPaymentResult, saved: locked, becamePaid: false };
+			}
+
+			const publicAddress = String(
+				input.to || locked.publicAddress || process.env.STELLAR_PUBLIC_KEY || '',
+			);
+			const txRepo = manager.getRepository(StellarTransactionEntity);
+
+			const existing = await txRepo.findOne({
+				where: {
+					transactionHash,
+					publicAddress,
+					type: StellarTransactionType.CREDIT,
+				},
+				lock: { mode: 'pessimistic_write' },
+			});
+
+			let isNewCredit = false;
+			if (existing) {
+				if (existing.orderId && existing.orderId !== locked.id) {
+					// Already counted towards a different order.
+					return { result: 'duplicate' as ApplyIncomingPaymentResult, saved: locked, becamePaid: false };
+				}
+				if (!existing.orderId) {
+					existing.orderId = locked.id;
+					await txRepo.save(existing);
+					isNewCredit = true;
+				}
+			} else {
+				await txRepo.save(
+					txRepo.create({
+						orderId: locked.id,
+						transactionHash,
+						amount: new Decimal(String(input.amount ?? '0')).toFixed(6),
+						type: StellarTransactionType.CREDIT,
+						currency,
+						status: StellarTransactionStatus.CONFIRMED,
+						network: input.network,
+						publicAddress,
+						counterpartyAddress: input.from,
+						memo,
+						rawPayload: input.rawPayload,
+					}),
+				);
+				isNewCredit = true;
+			}
+
+			const sumRow = await txRepo
+				.createQueryBuilder('t')
+				.select('COALESCE(SUM(t.amount), 0)', 'total')
+				.where('t.orderId = :orderId', { orderId: locked.id })
+				.andWhere('t.type = :type', { type: StellarTransactionType.CREDIT })
+				.andWhere('UPPER(t.currency) = :currency', { currency: expectedCurrency })
+				.getRawOne<{ total: string }>();
+
+			const paidAmount = new Decimal(String(sumRow?.total ?? '0'));
+			const expectedAmount = new Decimal(String(locked.assetAmount ?? '0'));
+			const wasPaid = locked.status === OrderStatus.PAID;
+
+			locked.paidAmount = paidAmount.toFixed(6);
+
+			let result: ApplyIncomingPaymentResult;
+			if (paidAmount.gte(expectedAmount)) {
+				locked.status = OrderStatus.PAID;
+				result = paidAmount.gt(expectedAmount) ? 'overpaid' : 'paid';
+			} else {
+				// Never downgrade an order that is already PAID.
+				if (!wasPaid) {
+					locked.status = OrderStatus.PARTIAL_PAID;
+				}
+				result = 'partial_paid';
+			}
+
+			const saved = await manager.getRepository(OrderEntity).save(locked);
+			return { result: isNewCredit ? result : ('duplicate' as ApplyIncomingPaymentResult), saved, becamePaid: !wasPaid && saved.status === OrderStatus.PAID };
+		});
+
+		if (outcome.saved) {
+			Object.assign(order, outcome.saved);
 		}
 
-		if (paidAmount.lt(expectedAmount)) {
-			order.status = OrderStatus.PARTIAL_PAID;
-			await this.orderRepo.save(order);
-			return 'partial_paid';
+		// Dispatch after commit. ensurePaidWebhookDispatched is itself a no-op once a webhook was SENT.
+		if (outcome.saved && outcome.saved.status === OrderStatus.PAID) {
+			await this.ensurePaidWebhookDispatched(outcome.saved, transactionHash, memo);
 		}
 
-		order.status = OrderStatus.PAID;
-		if(!order.virtualAccount) {
-			order.settlementStatus = OrderSettlementStatus.SETTLED;
-		}
-		await this.orderRepo.save(order);
-
-		return 'overpaid';
+		return outcome.result;
 	}
-
 
 	private async ensurePaidWebhookDispatched(
 		order: OrderEntity,
@@ -400,7 +482,11 @@ export class OrderService {
 					reference: order.reference,
 					transaction_hash: transactionHash,
 					memo: memo || order.memo,
+					// asset_amount stays the EXPECTED amount so the current Laravel handler is unchanged.
 					asset_amount: order.assetAmount,
+					expected_asset_amount: order.assetAmount,
+					// Actual on-chain amount received for this order (sum of linked credits).
+					received_asset_amount: order.paidAmount,
 					fait_amount: order.faitAmount,
 					asset_currency: order.currency,
 					status: 'paid',

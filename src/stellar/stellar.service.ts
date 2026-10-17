@@ -273,8 +273,14 @@ export class StellarService implements OnModuleInit {
 	// Listen for all network payments and enqueue them for async processing.
 	// Resumes from last saved cursor position on restart.
 	private async startListener(startCursor: string = 'now') {
-		const addresses = [this.platformPublic, this.platformBridgePublic].filter(
-			(address): address is string => Boolean(address),
+		// De-duplicate: when STELLAR_PUBLIC_KEY and STELLAR_BRIDGE_PUBLIC_KEY are the same
+		// account, opening two streams would emit every payment twice.
+		const addresses = Array.from(
+			new Set(
+				[this.platformPublic, this.platformBridgePublic].filter(
+					(address): address is string => Boolean(address),
+				),
+			),
 		);
 
 		if (addresses.length === 0) {

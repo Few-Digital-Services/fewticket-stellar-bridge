@@ -110,13 +110,20 @@ export class TransactionProcessor extends WorkerHost {
       if (isPlatformReceiver && memo) {
         const order = await this.orderService.findByMemoOrReference(memo);
         if (order) {
-          matchedOrderId = order.id;
-          await this.orderService.applyIncomingPayment(order, {
+          // Idempotent per transaction hash: replays/retries do not double count.
+          const result = await this.orderService.applyIncomingPayment(order, {
             memo,
             currency,
             amount,
             transactionHash: String(transactionHash),
+            to: String(to),
+            from: String(from),
+            network,
+            rawPayload,
           });
+          if (result !== 'mismatch') {
+            matchedOrderId = order.id;
+          }
         }
       }
 
