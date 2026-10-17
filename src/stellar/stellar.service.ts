@@ -27,6 +27,18 @@ import {
 } from '../queue/queue.constants';
 import { WalletEntity } from '../wallet/wallet.entity';
 
+/**
+ * Horizon operation types that deliver an asset to an account. Path payments
+ * (strict send / strict receive) carry the DESTINATION asset and the amount
+ * actually received in `asset_code` / `amount`, so they are matched exactly
+ * like plain payments.
+ */
+export const INCOMING_PAYMENT_TYPES = new Set([
+	'payment',
+	'path_payment_strict_send',
+	'path_payment_strict_receive',
+]);
+
 @Injectable()
 export class StellarService implements OnModuleInit {
 	private readonly logger = new Logger(StellarService.name);
@@ -353,7 +365,7 @@ export class StellarService implements OnModuleInit {
 
 	private async handlePaymentStreamEvent(payment: any): Promise<void> {
 		if (
-			payment.type !== 'payment' ||
+			!INCOMING_PAYMENT_TYPES.has(String(payment.type)) ||
 			!payment.transaction_hash ||
 			!payment.from ||
 			!payment.to
@@ -387,6 +399,10 @@ export class StellarService implements OnModuleInit {
 						: 'TESTNET',
 				rawPayload: {
 					id: payment.id,
+					type: payment.type,
+					source_amount: payment.source_amount,
+					source_asset_type: payment.source_asset_type,
+					source_asset_code: payment.source_asset_code,
 					transaction_hash: payment.transaction_hash,
 					from,
 					to,
@@ -495,7 +511,7 @@ export class StellarService implements OnModuleInit {
 		for (const payment of page.records ?? []) {
 			const record = payment as any;
 			if (
-				record.type !== 'payment' ||
+				!INCOMING_PAYMENT_TYPES.has(String(record.type)) ||
 				!record.transaction_hash ||
 				String(record.to) !== accountPublicKey
 			) {

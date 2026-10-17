@@ -37,6 +37,9 @@ type ApplyIncomingPaymentInput = {
 	from?: string;
 	network?: string;
 	rawPayload?: Record<string, unknown>;
+	// Set only by an admin recovery match: skips the memo check for a credit
+	// that already exists unlinked, and records who matched it.
+	adminMatchedBy?: string;
 };
 
 type ApplyIncomingPaymentResult =
@@ -181,6 +184,37 @@ export class OrderService {
 
 
 
+	/**
+	 * SEP-0007 pay URI so wallets that scan the QR fill destination, amount,
+	 * asset AND memo (an address-only QR loses the memo and the payment cannot
+	 * be matched).
+	 */
+	private buildSep7PayUri(order: OrderEntity): string | null {
+		if (!order.publicAddress) {
+			return null;
+		}
+		const assetCode = String(order.currency ?? 'usdc').toUpperCase();
+		const params: Array<[string, string]> = [['destination', order.publicAddress]];
+		const amount = new Decimal(String(order.assetAmount ?? '0'));
+		if (amount.gt(0)) {
+			params.push(['amount', amount.toDecimalPlaces(7).toString()]);
+		}
+		if (assetCode !== 'XLM') {
+			const issuer = process.env.STELLAR_USDC_ISSUER;
+			if (!issuer) {
+				return null;
+			}
+			params.push(['asset_code', assetCode], ['asset_issuer', issuer]);
+		}
+		if (order.memo) {
+			params.push(['memo', order.memo], ['memo_type', 'MEMO_TEXT']);
+		}
+		return (
+			'web+stellar:pay?' +
+			params.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&')
+		);
+	}
+
 	private buildStellarOrderResponse(order: OrderEntity) {
 		return {
 			message: 'Order created successfully',
@@ -193,6 +227,10 @@ export class OrderService {
 				currency: order.currency,
 				network: order.network,
 				fait_currency: order.faitCurrency,
+				asset_code: String(order.currency ?? 'usdc').toUpperCase(),
+				asset_issuer: process.env.STELLAR_USDC_ISSUER ?? null,
+				memo_type: 'MEMO_TEXT',
+				sep7_uri: this.buildSep7PayUri(order),
 			},
 		};
 	}
@@ -341,7 +379,8 @@ export class OrderService {
 			}
 
 			const expectedCurrency = String(locked.currency ?? '').trim().toUpperCase();
-			const memoMatches = memo === locked.reference || memo === locked.memo;
+			const memoMatches =
+				Boolean(input.adminMatchedBy) || memo === locked.reference || memo === locked.memo;
 			if (!memoMatches || currency !== expectedCurrency) {
 				return { result: 'mismatch' as ApplyIncomingPaymentResult, saved: locked, becamePaid: false };
 			}
@@ -368,9 +407,22 @@ export class OrderService {
 				}
 				if (!existing.orderId) {
 					existing.orderId = locked.id;
+					if (input.adminMatchedBy) {
+						existing.rawPayload = {
+							...(existing.rawPayload ?? {}),
+							admin_match: {
+								matched_by: input.adminMatchedBy,
+								matched_at: new Date().toISOString(),
+								order_reference: locked.reference,
+							},
+						};
+					}
 					await txRepo.save(existing);
 					isNewCredit = true;
 				}
+			} else if (input.adminMatchedBy) {
+				// Admin matching only links credits that were already recorded on-chain.
+				return { result: 'mismatch' as ApplyIncomingPaymentResult, saved: locked, becamePaid: false };
 			} else {
 				await txRepo.save(
 					txRepo.create({
@@ -430,6 +482,124 @@ export class OrderService {
 		}
 
 		return outcome.result;
+	}
+
+	private platformAddresses(): string[] {
+		return Array.from(
+			new Set(
+				[process.env.STELLAR_PUBLIC_KEY, process.env.STELLAR_BRIDGE_PUBLIC_KEY].filter(
+					(a): a is string => Boolean(a),
+				),
+			),
+		);
+	}
+
+	/**
+	 * Incoming credits to the platform account that are not linked to any order
+	 * (missing / wrong memo). Self-transfers by the platform are excluded.
+	 */
+	async listUnmatchedCredits(options?: { currency?: string; limit?: number }) {
+		const platform = this.platformAddresses();
+		if (platform.length === 0) {
+			return { message: 'Unmatched credits retrieved', data: [] };
+		}
+		const currency = String(options?.currency ?? 'USDC').toUpperCase();
+		const limit = Math.min(Math.max(Number(options?.limit ?? 100) || 100, 1), 500);
+
+		const rows = await this.stellarTransactionRepo
+			.createQueryBuilder('t')
+			.where('t.type = :type', { type: StellarTransactionType.CREDIT })
+			.andWhere('t.orderId IS NULL')
+			.andWhere('t.publicAddress IN (:...platform)', { platform })
+			.andWhere('(t.counterpartyAddress IS NULL OR t.counterpartyAddress NOT IN (:...platform))', { platform })
+			.andWhere('UPPER(t.currency) = :currency', { currency })
+			.orderBy('t.createdAt', 'DESC')
+			.limit(limit)
+			.getMany();
+
+		const testnet = String(process.env.STELLAR_NETWORK ?? 'TESTNET').toUpperCase() !== 'PUBLIC';
+		return {
+			message: 'Unmatched credits retrieved',
+			data: rows.map((t) => ({
+				transaction_hash: t.transactionHash,
+				amount: t.amount,
+				currency: t.currency,
+				from: t.counterpartyAddress ?? null,
+				to: t.publicAddress ?? null,
+				memo: t.memo ?? null,
+				operation_type: (t.rawPayload as any)?.type ?? 'payment',
+				created_at: t.createdAt ? t.createdAt.toISOString() : null,
+				explorer_url: `https://stellar.expert/explorer/${testnet ? 'testnet' : 'public'}/tx/${t.transactionHash}`,
+			})),
+		};
+	}
+
+	/**
+	 * Admin recovery: link an unmatched on-chain credit to a Stellar order and
+	 * re-evaluate the order (idempotent; the credit can only ever be linked once).
+	 */
+	async matchUnmatchedCredit(reference: string, transactionHash: string, matchedBy: string) {
+		const hash = String(transactionHash ?? '').trim();
+		const by = String(matchedBy ?? '').trim();
+		if (!hash || !by) {
+			throw new BadRequestException('transaction_hash and matched_by are required');
+		}
+
+		const order = await this.orderRepo.findOne({
+			where: { reference, serviceType: ServiceType.STELLAR },
+		});
+		if (!order) {
+			throw new BadRequestException('Order not found');
+		}
+		if (order.status === OrderStatus.PAID) {
+			throw new BadRequestException('Order is already paid');
+		}
+
+		const platform = this.platformAddresses();
+		const credit = await this.stellarTransactionRepo
+			.createQueryBuilder('t')
+			.where('t.transactionHash = :hash', { hash })
+			.andWhere('t.type = :type', { type: StellarTransactionType.CREDIT })
+			.andWhere('t.publicAddress IN (:...platform)', { platform: platform.length ? platform : [''] })
+			.getOne();
+
+		if (!credit) {
+			throw new BadRequestException('Credit not found for the platform account');
+		}
+		if (credit.orderId) {
+			throw new BadRequestException(
+				credit.orderId === order.id ? 'Credit is already linked to this order' : 'Credit is already linked to another order',
+			);
+		}
+		if (String(credit.currency ?? '').toUpperCase() !== String(order.currency ?? '').toUpperCase()) {
+			throw new BadRequestException('Credit currency does not match the order currency');
+		}
+
+		const result = await this.applyIncomingPayment(order, {
+			memo: order.memo ?? '',
+			currency: credit.currency,
+			amount: credit.amount,
+			transactionHash: credit.transactionHash,
+			to: credit.publicAddress,
+			from: credit.counterpartyAddress,
+			adminMatchedBy: by,
+		});
+
+		if (result === 'mismatch' || result === 'duplicate') {
+			throw new BadRequestException(`Credit could not be matched (${result})`);
+		}
+
+		return {
+			message: 'Credit matched to order',
+			data: {
+				reference: order.reference,
+				transaction_hash: credit.transactionHash,
+				result,
+				status: order.status,
+				asset_amount: order.assetAmount,
+				paid_amount: order.paidAmount,
+			},
+		};
 	}
 
 	private async ensurePaidWebhookDispatched(

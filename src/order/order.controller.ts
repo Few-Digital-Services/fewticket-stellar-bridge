@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, UseGuards, Param } from '@nestjs/common';
+import { Body, Controller, Get, Post, UseGuards, Param, Query } from '@nestjs/common';
 import { OrderService } from './order.service';
 import { CreateStellarOrderDto } from './dto/create-stellar-order.dto';
 import { VerifyOrderTransactionDto } from './dto/verify-order-transaction.dto';
@@ -11,6 +11,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { CreateBridgeVirtualAccountOrderDto } from './dto/create-bridge-virtual-account-order.dto';
+import { MatchUnmatchedCreditDto } from './dto/match-unmatched-credit.dto';
 
 @UseGuards(SystemOauth2Guard)
 @Controller('order')
@@ -19,6 +20,33 @@ import { CreateBridgeVirtualAccountOrderDto } from './dto/create-bridge-virtual-
 export class OrderController {
 	
 	constructor(private readonly orderService: OrderService) {}
+
+	@Get('stellar/unmatched-credits')
+	@ApiOperation({
+		summary: 'List unmatched incoming credits',
+		description:
+			'Incoming payments to the platform account that are not linked to any order (missing or wrong memo). For admin recovery.',
+	})
+	listUnmatchedCredits(
+		@Query('currency') currency?: string,
+		@Query('limit') limit?: string,
+	) {
+		return this.orderService.listUnmatchedCredits({ currency, limit: limit ? Number(limit) : undefined });
+	}
+
+	@Post('stellar/:reference/match-credit')
+	@ApiOperation({
+		summary: 'Admin: link an unmatched credit to an order',
+		description:
+			'Links an unmatched on-chain credit to a Stellar order, recomputes paid_amount and dispatches the paid webhook when fully paid.',
+	})
+	@ApiBody({ type: MatchUnmatchedCreditDto })
+	matchUnmatchedCredit(
+		@Param('reference') reference: string,
+		@Body() dto: MatchUnmatchedCreditDto,
+	) {
+		return this.orderService.matchUnmatchedCredit(reference, dto.transaction_hash, dto.matched_by);
+	}
 
 	@Post('stellar')
 	@ApiOperation({
