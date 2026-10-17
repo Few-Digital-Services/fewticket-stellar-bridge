@@ -18,11 +18,12 @@ import {
 import { CreateStellarOrderDto } from './dto/create-stellar-order.dto';
 import { VerifyOrderTransactionDto } from './dto/verify-order-transaction.dto';
 import { WebhookJob, WebhookQueue } from '../queue/queue.constants';
-import { WebhookType } from '../webhook/webhook.entity';
+import { WebhookEntity, WebhookStatus, WebhookType } from '../webhook/webhook.entity';
 import { CreateBridgeVirtualAccountOrderDto } from './dto/create-bridge-virtual-account-order.dto';
 
 import { BridgeVirtualAccountEntity } from 'src/bridge-virtual-account/bridge-virtual-account.entity';
 import { BridgeVirtualAccountService } from 'src/bridge-virtual-account/bridge-virtual-account.service';
+import { StellarService } from '../stellar/stellar.service';
 
 
 type ApplyIncomingPaymentInput = {
@@ -45,11 +46,14 @@ export class OrderService {
 		private readonly orderRepo: Repository<OrderEntity>,
 		@InjectRepository(StellarTransactionEntity)
 		private readonly stellarTransactionRepo: Repository<StellarTransactionEntity>,
+		@InjectRepository(WebhookEntity)
+		private readonly webhookRepo: Repository<WebhookEntity>,
 		@InjectQueue(WebhookQueue.name)
 		private readonly webhookQueue: Queue,
 		private readonly dataSource: DataSource,
 
 		private readonly bridgeVirtualAccountService: BridgeVirtualAccountService,
+		private readonly stellarService: StellarService,
 	) { }
 
 	findByMemoOrReference(memo: string) {
@@ -169,6 +173,86 @@ export class OrderService {
 	}
 
 
+
+	private buildStellarOrderResponse(order: OrderEntity) {
+		return {
+			message: 'Order created successfully',
+			data: {
+				reference: order.reference,
+				memo: order.memo,
+				public_address: order.publicAddress,
+				asset_amount: order.assetAmount,
+				fait_amount: order.faitAmount,
+				currency: order.currency,
+				network: order.network,
+				fait_currency: order.faitCurrency,
+			},
+		};
+	}
+
+	private async reconcileExistingOnChainPayment(order: OrderEntity): Promise<OrderEntity> {
+		if (order.serviceType !== ServiceType.STELLAR || !order.memo) {
+			return order;
+		}
+
+		if (order.status === OrderStatus.PAID) {
+			await this.ensurePaidWebhookDispatched(order);
+			return order;
+		}
+
+		const publicKey = order.publicAddress || process.env.STELLAR_PUBLIC_KEY;
+		if (!publicKey) {
+			return order;
+		}
+
+		const expectedCurrency = String(order.currency ?? 'usdc').toUpperCase();
+		const matchingPayments = await this.stellarService.findPaymentsMatchingMemo(
+			publicKey,
+			order.memo,
+			{ assetCode: expectedCurrency },
+		);
+
+		for (const payment of matchingPayments) {
+			const existingTx = await this.stellarTransactionRepo.findOne({
+				where: { transactionHash: payment.transactionHash },
+			});
+
+			if (existingTx?.orderId && existingTx.orderId !== order.id) {
+				continue;
+			}
+
+			if (existingTx && !existingTx.orderId) {
+				existingTx.orderId = order.id;
+				await this.stellarTransactionRepo.save(existingTx);
+			}
+
+			const paymentInput = {
+				memo: payment.memo,
+				currency: payment.currency,
+				amount: payment.amount,
+				transactionHash: payment.transactionHash,
+			};
+
+			await this.applyIncomingPayment(order, paymentInput);
+
+			const refreshed = await this.orderRepo.findOne({ where: { id: order.id } });
+			if (refreshed) {
+				Object.assign(order, refreshed);
+			}
+
+			if (refreshed?.status === OrderStatus.PAID) {
+				await this.ensurePaidWebhookDispatched(
+					order,
+					payment.transactionHash,
+					payment.memo,
+				);
+				break;
+			}
+		}
+
+		return order;
+	}
+
 	async createOrder(dto: CreateStellarOrderDto) {
 		const faitAmount = dto.fait_amount;
 		if (!faitAmount) {
@@ -183,20 +267,8 @@ export class OrderService {
 		});
 
 		if (existingReference) {
-			return {
-				message: 'Order created successfully',
-				data: {
-					reference: existingReference.reference,
-					memo: existingReference.memo,
-					public_address: existingReference.publicAddress,
-					asset_amount: existingReference.assetAmount,
-					fait_amount: existingReference.faitAmount,
-					currency: existingReference.currency,
-					network: existingReference.network,
-					fait_currency: existingReference.faitCurrency,
-				}
-
-			};
+			const reconciled = await this.reconcileExistingOnChainPayment(existingReference);
+			return this.buildStellarOrderResponse(reconciled);
 		}
 
 		const memo = await this.generateUniqueMemo();
@@ -215,22 +287,8 @@ export class OrderService {
 		order.serviceType = ServiceType.STELLAR;
 
 		const savedOrder = await this.orderRepo.save(order);
-		return {
-			message: 'Order created successfully',
-			data: {
-				reference: savedOrder.reference,
-				memo: savedOrder.memo,
-				public_address: savedOrder.publicAddress,
-				asset_amount: savedOrder.assetAmount,
-				fait_amount: savedOrder.faitAmount,
-				currency: savedOrder.currency,
-				network: savedOrder.network,
-				fait_currency: savedOrder.faitCurrency,
-			}
-
-		};
-
-
+		const reconciled = await this.reconcileExistingOnChainPayment(savedOrder);
+		return this.buildStellarOrderResponse(reconciled);
 	}
 
 	async markAsPaid(order: OrderEntity) {
@@ -266,8 +324,12 @@ export class OrderService {
 			order.status = OrderStatus.PAID;
 			const savedOrder = await this.orderRepo.save(order);
 
-			if (!wasAlreadyPaid && input.transactionHash) {
-				await this.dispatchPaidWebhook(savedOrder, input.transactionHash, memo);
+			if (input.transactionHash) {
+				await this.ensurePaidWebhookDispatched(
+					savedOrder,
+					input.transactionHash,
+					memo,
+				);
 			}
 			return 'paid';
 		}
@@ -285,6 +347,43 @@ export class OrderService {
 		await this.orderRepo.save(order);
 
 		return 'overpaid';
+	}
+
+
+	private async ensurePaidWebhookDispatched(
+		order: OrderEntity,
+		transactionHash?: string,
+		memo?: string,
+	): Promise<void> {
+		if (order.status !== OrderStatus.PAID) {
+			return;
+		}
+
+		const sentWebhook = await this.webhookRepo.findOne({
+			where: {
+				reference: order.reference,
+				type: WebhookType.STELLAR,
+				status: WebhookStatus.SENT,
+			},
+		});
+
+		if (sentWebhook) {
+			return;
+		}
+
+		const linkedTx = transactionHash
+			? null
+			: await this.stellarTransactionRepo.findOne({
+				where: { orderId: order.id },
+				order: { createdAt: "DESC" },
+			});
+
+		const hash = transactionHash || linkedTx?.transactionHash;
+		if (!hash) {
+			return;
+		}
+
+		await this.dispatchPaidWebhook(order, hash, memo || order.memo || "");
 	}
 
 	private async dispatchPaidWebhook(
@@ -322,6 +421,98 @@ export class OrderService {
 	 * Verify that a transaction is completed for the given reference
 	 * Called by Laravel before processing tickets
 	 */
+
+	async getStellarOrderDiagnostics(reference: string) {
+		const order = await this.orderRepo.findOne({
+			where: { reference, serviceType: ServiceType.STELLAR },
+		});
+
+		if (!order) {
+			return {
+				message: 'Diagnostics retrieved',
+				data: {
+					order_found: false,
+					reference,
+				},
+			};
+		}
+
+		const publicKey = order.publicAddress || process.env.STELLAR_PUBLIC_KEY;
+		const expectedCurrency = String(order.currency ?? 'usdc').toUpperCase();
+		let matchingPayments: Array<{
+			transactionHash: string;
+			amount: string;
+			memo: string;
+			currency: string;
+			from: string;
+			to: string;
+			createdAt: string | null;
+		}> = [];
+
+		if (order.memo && publicKey) {
+			matchingPayments = await this.stellarService.findPaymentsMatchingMemo(
+				publicKey,
+				order.memo,
+				{ assetCode: expectedCurrency },
+			);
+		}
+
+		const totalReceived = matchingPayments.reduce(
+			(sum, payment) => sum.plus(String(payment.amount ?? '0')),
+			new Decimal(0),
+		);
+
+		const stellarTransactions = await this.stellarTransactionRepo.find({
+			where: { orderId: order.id },
+			order: { createdAt: 'DESC' },
+			take: 10,
+		});
+
+		const latestWebhook = await this.webhookRepo.findOne({
+			where: { reference: order.reference, type: WebhookType.STELLAR },
+			order: { createdAt: 'DESC' },
+		});
+
+		return {
+			message: 'Diagnostics retrieved',
+			data: {
+				order_found: true,
+				reference: order.reference,
+				memo: order.memo,
+				status: order.status,
+				asset_amount: order.assetAmount,
+				paid_amount: order.paidAmount,
+				public_address: order.publicAddress,
+				order_created_at: order.createdAt
+					? order.createdAt.toISOString()
+					: null,
+				on_chain: {
+					matching_payments: matchingPayments.map((payment) => ({
+						transaction_hash: payment.transactionHash,
+						amount: payment.amount,
+						created_at: payment.createdAt,
+					})),
+					total_received: totalReceived.toFixed(6),
+				},
+				stellar_transactions: stellarTransactions.map((tx) => ({
+					transaction_hash: tx.transactionHash,
+					type: tx.type,
+					status: tx.status,
+					amount: tx.amount,
+				})),
+				webhook: latestWebhook
+					? {
+							last_sent_at: latestWebhook.updatedAt
+								? latestWebhook.updatedAt.toISOString()
+								: latestWebhook.createdAt?.toISOString?.() ?? null,
+							last_reference: latestWebhook.reference ?? null,
+							status: latestWebhook.status,
+						}
+					: null,
+			},
+		};
+	}
+
 	async verifyTransaction(
 		reference: string,
 		input?: VerifyOrderTransactionDto,

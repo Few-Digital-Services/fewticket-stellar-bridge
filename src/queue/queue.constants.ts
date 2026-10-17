@@ -1,9 +1,14 @@
+const queueEnvPrefix = String(process.env.APP_ENV || 'development')
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9_-]+/g, '-');
+
 export const MailQueue = {
-  name: 'mail-queue',
+  name: `${queueEnvPrefix}-mail-queue`,
 };
 
 export const IncomingTransactionQueue = {
-  name: 'incoming-transaction-queue',
+  name: `${queueEnvPrefix}-incoming-transaction-queue`,
 };
 
 export const IncomingTransactionJob = {
@@ -11,7 +16,7 @@ export const IncomingTransactionJob = {
 };
 
 export const WebhookQueue = {
-  name: 'webhook-queue',
+  name: `${queueEnvPrefix}-webhook-queue`,
 };
 
 export const WebhookJob = {

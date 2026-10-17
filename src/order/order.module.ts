@@ -9,13 +9,16 @@ import { AuthModule } from '../auth/auth.module';
 import { WebhookQueue } from '../queue/queue.constants';
 import { BridgeModule } from '../bridge/bridge.module';
 import { BridgeVirtualAccountModule } from 'src/bridge-virtual-account/bridge-virtual-account.module';
+import { StellarModule } from '../stellar/stellar.module';
+import { WebhookEntity } from '../webhook/webhook.entity';
 
 @Module({
   imports: [
     AuthModule,
     BridgeModule,
     BridgeVirtualAccountModule,
-    TypeOrmModule.forFeature([OrderEntity, StellarTransactionEntity]),
+    StellarModule,
+    TypeOrmModule.forFeature([OrderEntity, StellarTransactionEntity, WebhookEntity]),
     BullModule.registerQueue({
       name: WebhookQueue.name,
     }),

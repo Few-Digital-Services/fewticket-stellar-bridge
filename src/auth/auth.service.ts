@@ -16,7 +16,6 @@ export class AuthService {
   generateToken(clientId: string, clientSecret: string): AccessToken {
     const expectedClientId = this.configService.get<string>('APP_CLIENT_ID');
     const expectedClientSecret = this.configService.get<string>('APP_CLIENT_SECRET');
-    console.log(`Expected clientId: ${expectedClientId}, Expected clientSecret: ${expectedClientSecret}`);
 
     if (clientId?.trim() !== expectedClientId || clientSecret?.trim() !== expectedClientSecret) {
       throw new UnauthorizedException('Invalid client credentials');

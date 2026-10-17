@@ -11,33 +11,15 @@ services:
     ports:
       - "127.0.0.1:5000:5000"
     environment:
-      - APP_ENV=production
+      # Only docker-specific overrides here — do NOT repeat DB_* / secrets from env_file
+      # (empty ${VAR} substitutions would wipe values loaded from .env.live).
+      - APP_ENV=live
       - BRIDGE_ENVIRONMENT=production
-      - BASE_URL=${LIVE_BASE_URL:-http://localhost:5000}
       - PORT=5000
-      - PROCESS_NAME=fewticket-stellar-bridge-live
-      - DB_HOST=${DB_HOST}
-      - DB_PORT=${DB_PORT:-3306}
-      - DB_USERNAME=${DB_USERNAME}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_SYNC=${DB_SYNC}
-      - DB_DATABASE=${DB_DATABASE}
-      - JWT_SECRET=${JWT_SECRET}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - MAIL_HOST=${MAIL_HOST}
-      - MAIL_PORT=${MAIL_PORT}
-      - MAIL_USER=${MAIL_USER}
-      - MAIL_PASS=${MAIL_PASS}
-      - MAIL_FROM=${MAIL_FROM}
-      - BULL_DASHBOARD_USER=${BULL_DASHBOARD_USER}
-      - BULL_DASHBOARD_PASS=${BULL_DASHBOARD_PASS}
-      - STELLAR_PUBLIC_KEY=${STELLAR_PUBLIC_KEY}
-      - STELLAR_SECRET_KEY=${STELLAR_SECRET_KEY}
-      - STELLAR_HORIZON_URL=${STELLAR_HORIZON_URL}
-      - STELLAR_NETWORK=${STELLAR_NETWORK}
-      - LARAVEL_WEBHOOK_URL=${LARAVEL_WEBHOOK_URL}
-      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - redis
     networks:
@@ -59,32 +41,12 @@ services:
       - "127.0.0.1:5001:5001"
     environment:
       - APP_ENV=sandbox
-      - BRIDGE_ENVIRONMENT=sandbox
-      - BASE_URL=${SANDBOX_BASE_URL:-http://localhost:5001}
+      - BRIDGE_ENVIRONMENT=production
       - PORT=5001
-      - PROCESS_NAME=fewticket-stellar-bridge-sandbox
-      - DB_HOST=${DB_HOST}
-      - DB_PORT=${DB_PORT:-3306}
-      - DB_USERNAME=${DB_USERNAME}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_SYNC=${DB_SYNC}
-      - DB_DATABASE=${DB_DATABASE}
-      - JWT_SECRET=${JWT_SECRET}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - MAIL_HOST=${MAIL_HOST}
-      - MAIL_PORT=${MAIL_PORT}
-      - MAIL_USER=${MAIL_USER}
-      - MAIL_PASS=${MAIL_PASS}
-      - MAIL_FROM=${MAIL_FROM}
-      - BULL_DASHBOARD_USER=${BULL_DASHBOARD_USER}
-      - BULL_DASHBOARD_PASS=${BULL_DASHBOARD_PASS}
-      - STELLAR_PUBLIC_KEY=${STELLAR_PUBLIC_KEY}
-      - STELLAR_SECRET_KEY=${STELLAR_SECRET_KEY}
-      - STELLAR_HORIZON_URL=${STELLAR_HORIZON_URL}
-      - STELLAR_NETWORK=${STELLAR_NETWORK}
-      - LARAVEL_WEBHOOK_URL=${LARAVEL_WEBHOOK_URL}
-      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - redis
     networks:
@@ -100,7 +62,7 @@ services:
     container_name: redis
     restart: always
     ports:
-      - "6378:6379"
+      - "127.0.0.1:6378:6379"
     networks:
       - app-network
     volumes:
@@ -109,6 +71,9 @@ services:
 networks:
   app-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
 
 volumes:
   redis-data:

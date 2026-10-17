@@ -17,8 +17,6 @@ export class SystemOauth2Guard implements CanActivate {
     const request = context.switchToHttp().getRequest<Request>();
     const authHeader = request.headers['authorization']?.trim() || '';
     const [scheme, token] = authHeader.split(/\s+/);
-    console.log(`Received request with Authorization header: ${authHeader}`);
-    console.log(`Parsed scheme: ${scheme}, token: ${token}`);
 
 
     if (scheme?.toLowerCase() !== 'bearer' || !token) {

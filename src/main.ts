@@ -66,16 +66,17 @@ async function bootstrap() {
     )
     .build();
 
-  //disable swagger in production
-  if (process.env.APP_ENV === 'production') {
+  // Disable swagger in production/live deployments
+  const appEnv = String(process.env.APP_ENV ?? '').toLowerCase();
+  if (appEnv === 'production' || appEnv === 'live') {
     logger.warn('Swagger documentation is disabled in production');
   } else {
     const document = SwaggerModule.createDocument(app, config);
     SwaggerModule.setup('api/docs', app, document); // URL: /api/docs
   }
 
-  const appEnv = String(process.env.APP_ENV ?? '').toLowerCase();
-  const defaultPort = appEnv === 'sandbox' ? 5001 : 5000;
+  const runtimeEnv = String(process.env.APP_ENV ?? '').toLowerCase();
+  const defaultPort = runtimeEnv === 'sandbox' ? 5001 : 5000;
   const port = Number(process.env.PORT ?? defaultPort);
 
   await app.listen(Number.isNaN(port) ? defaultPort : port);

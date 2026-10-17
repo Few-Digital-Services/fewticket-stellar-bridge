@@ -76,7 +76,7 @@ export class StellarService implements OnModuleInit {
 		// Load the last saved cursor position for recovery after restarts
 		const resumeCursor = await this.listenerStateService.getResumeCursor();
 		await this.refreshTrackedAddressCache(true);
-		this.startListener(resumeCursor);
+		await this.startListener(resumeCursor);
 	}
 
 	generateWallet() {
@@ -272,112 +272,151 @@ export class StellarService implements OnModuleInit {
 
 	// Listen for all network payments and enqueue them for async processing.
 	// Resumes from last saved cursor position on restart.
-	private startListener(startCursor: string = 'now') {
+	private async startListener(startCursor: string = 'now') {
+		const addresses = [this.platformPublic, this.platformBridgePublic].filter(
+			(address): address is string => Boolean(address),
+		);
+
+		if (addresses.length === 0) {
+			this.logger.warn(
+				'No platform Stellar addresses configured; payment listener not started.',
+			);
+			return;
+		}
+
+		for (const address of addresses) {
+			const accountExists = await this.accountExistsOnHorizon(address);
+			if (!accountExists) {
+				this.logger.warn(
+					`Skipping Stellar payment listener for ${address}; account not found on Horizon.`,
+				);
+				continue;
+			}
+
+			this.startAccountPaymentListener(address, startCursor);
+		}
+
+		this.logger.log(
+			`Stellar Horizon listener started for ${addresses.length} platform address(es)`,
+		);
+	}
+
+
+	private async accountExistsOnHorizon(publicKey: string): Promise<boolean> {
+		try {
+			await this.server.loadAccount(publicKey);
+			return true;
+		} catch (error) {
+			const status = (error as any)?.response?.status;
+			if (status === 404) {
+				return false;
+			}
+			this.logger.warn(
+				`Unable to verify Horizon account ${publicKey}: ${this.stringifyError(error)}`,
+			);
+			return false;
+		}
+	}
+
+	private startAccountPaymentListener(
+		accountPublicKey: string,
+		startCursor: string = 'now',
+	) {
 		this.server
 			.payments()
+			.forAccount(accountPublicKey)
 			.cursor(startCursor)
 			.stream({
 				onmessage: async (payment: any) => {
 					try {
-						await this.refreshTrackedAddressCache();
-
-						if (
-							payment.type !== 'payment' ||
-							!payment.transaction_hash ||
-							!payment.from ||
-							!payment.to
-						) {
-							if (payment.paging_token) {
-								await this.listenerStateService.updateCursor(
-									payment.paging_token,
-									Number(payment.ledger_attr ?? 0),
-								);
-							}
-							return;
-						}
-				
-
-						const from = String(payment.from);
-						const to = String(payment.to);
-						if (
-							!this.trackedAddressSet.has(from) &&
-							!this.trackedAddressSet.has(to)
-						) {
-							if (payment.paging_token) {
-								await this.listenerStateService.updateCursor(
-									payment.paging_token,
-									Number(payment.ledger_attr ?? 0),
-								);
-							}
-							return;
-						}
-
-						await this.incomingTransactionQueue.add(
-							IncomingTransactionJob.stellarPaymentDetected,
-							{
-								transactionHash: payment.transaction_hash,
-								amount: payment.amount,
-								from,
-								to,
-								assetType: payment.asset_type,
-								assetCode: payment.asset_code,
-								memo: payment.memo,
-								pagingToken: payment.paging_token,
-								network:
-									this.networkPassphrase === Networks.PUBLIC
-										? 'PUBLIC'
-										: 'TESTNET',
-								rawPayload: {
-									id: payment.id,
-									transaction_hash: payment.transaction_hash,
-									from,
-									to,
-									amount: payment.amount,
-									asset_type: payment.asset_type,
-									asset_code: payment.asset_code,
-									paging_token: payment.paging_token,
-								},
-							},
-							{
-								jobId: `stellar-payment-${String(payment.paging_token ?? payment.transaction_hash)}`,
-								removeOnComplete: {
-									count: Number(
-										this.configService.get<string>(
-											'BULL_INCOMING_REMOVE_ON_COMPLETE_COUNT',
-											'50',
-										),
-									),
-								},
-								removeOnFail: {
-									count: Number(
-										this.configService.get<string>(
-											'BULL_INCOMING_REMOVE_ON_FAIL_COUNT',
-											'200',
-										),
-									),
-								},
-							},
-						);
-
-						if (payment.paging_token) {
-							await this.listenerStateService.updateCursor(
-								payment.paging_token,
-								Number(payment.ledger_attr ?? 0),
-							);
-						}
+						await this.handlePaymentStreamEvent(payment);
 					} catch (error) {
 						this.logger.error(
-							`Failed to process stellar payment stream event: ${this.stringifyError(error)}`,
+							`Failed to process stellar payment stream event for ${accountPublicKey}: ${this.stringifyError(error)}`,
 						);
 					}
 				},
 				onerror: (event: MessageEvent<any>) => {
 					const errorData = this.stringifyError(event?.data);
-					this.logger.error(`Horizon stream error: ${errorData}`);
+					this.logger.error(
+						`Horizon stream error for ${accountPublicKey}: ${errorData}`,
+					);
 				},
 			});
+	}
 
-		this.logger.log('Stellar Horizon listener started');
+	private async handlePaymentStreamEvent(payment: any): Promise<void> {
+		if (
+			payment.type !== 'payment' ||
+			!payment.transaction_hash ||
+			!payment.from ||
+			!payment.to
+		) {
+			if (payment.paging_token) {
+				await this.listenerStateService.updateCursor(
+					payment.paging_token,
+					Number(payment.ledger_attr ?? 0),
+				);
+			}
+			return;
+		}
+
+		const from = String(payment.from);
+		const to = String(payment.to);
+
+		await this.incomingTransactionQueue.add(
+			IncomingTransactionJob.stellarPaymentDetected,
+			{
+				transactionHash: payment.transaction_hash,
+				amount: payment.amount,
+				from,
+				to,
+				assetType: payment.asset_type,
+				assetCode: payment.asset_code,
+				memo: payment.memo,
+				pagingToken: payment.paging_token,
+				network:
+					this.networkPassphrase === Networks.PUBLIC
+						? 'PUBLIC'
+						: 'TESTNET',
+				rawPayload: {
+					id: payment.id,
+					transaction_hash: payment.transaction_hash,
+					from,
+					to,
+					amount: payment.amount,
+					asset_type: payment.asset_type,
+					asset_code: payment.asset_code,
+					paging_token: payment.paging_token,
+				},
+			},
+			{
+				jobId: `stellar-payment-${String(payment.paging_token ?? payment.transaction_hash)}`,
+				removeOnComplete: {
+					count: Number(
+						this.configService.get<string>(
+							'BULL_INCOMING_REMOVE_ON_COMPLETE_COUNT',
+							'50',
+						),
+					),
+				},
+				removeOnFail: {
+					count: Number(
+						this.configService.get<string>(
+							'BULL_INCOMING_REMOVE_ON_FAIL_COUNT',
+							'200',
+						),
+					),
+				},
+			},
+		);
+
+		if (payment.paging_token) {
+			await this.listenerStateService.updateCursor(
+				payment.paging_token,
+				Number(payment.ledger_attr ?? 0),
+			);
+		}
 	}
 
 	private async refreshTrackedAddressCache(force = false): Promise<void> {
@@ -405,6 +444,100 @@ export class StellarService implements OnModuleInit {
 		}
 
 		this.lastTrackedAddressRefreshAt = now;
+	}
+
+
+	async findPaymentsMatchingMemo(
+		accountPublicKey: string,
+		memo: string,
+		options?: { limit?: number; assetCode?: string },
+	): Promise<
+		Array<{
+			transactionHash: string;
+			amount: string;
+			memo: string;
+			currency: string;
+			from: string;
+			to: string;
+			createdAt: string | null;
+		}>
+	> {
+		const normalizedMemo = String(memo ?? '').trim();
+		if (!normalizedMemo || !accountPublicKey) {
+			return [];
+		}
+
+		const limit = options?.limit ?? 200;
+		const assetCode = String(options?.assetCode ?? 'USDC').toUpperCase();
+		const matches: Array<{
+			transactionHash: string;
+			amount: string;
+			memo: string;
+			currency: string;
+			from: string;
+			to: string;
+			createdAt: string | null;
+		}> = [];
+
+		const page = await this.server
+			.payments()
+			.forAccount(accountPublicKey)
+			.order('desc')
+			.limit(limit)
+			.call();
+
+		for (const payment of page.records ?? []) {
+			const record = payment as any;
+			if (
+				record.type !== 'payment' ||
+				!record.transaction_hash ||
+				String(record.to) !== accountPublicKey
+			) {
+				continue;
+			}
+
+			const currency = record.asset_code
+				? String(record.asset_code).toUpperCase()
+				: record.asset_type === 'native'
+					? 'XLM'
+					: 'UNKNOWN';
+
+			if (currency !== assetCode) {
+				continue;
+			}
+
+			try {
+				const tx = await this.server
+					.transactions()
+					.transaction(String(record.transaction_hash))
+					.call();
+
+				const txMemo = tx.memo ? String(tx.memo).trim() : '';
+				if (txMemo !== normalizedMemo) {
+					continue;
+				}
+
+				matches.push({
+					transactionHash: String(record.transaction_hash),
+					amount: String(record.amount),
+					memo: txMemo,
+					currency,
+					from: String(record.from),
+					to: String(record.to),
+					createdAt: record.created_at
+						? String(record.created_at)
+						: tx.created_at
+							? String(tx.created_at)
+							: null,
+				});
+			} catch (error) {
+				this.logger.warn(
+					`Unable to load transaction ${record.transaction_hash} during memo reconciliation: ${this.stringifyError(error)}`,
+				);
+			}
+		}
+
+		return matches;
 	}
 
 	private stringifyError(value: unknown): string {

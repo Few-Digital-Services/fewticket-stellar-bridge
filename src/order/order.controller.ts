@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards, Param } from '@nestjs/common';
+import { Body, Controller, Get, Post, UseGuards, Param } from '@nestjs/common';
 import { OrderService } from './order.service';
 import { CreateStellarOrderDto } from './dto/create-stellar-order.dto';
 import { VerifyOrderTransactionDto } from './dto/verify-order-transaction.dto';
@@ -37,6 +37,20 @@ export class OrderController {
 	})
 	createOrder(@Body() dto: CreateStellarOrderDto) {
 		return this.orderService.createOrder(dto);
+	}
+
+	@Get('stellar/:reference/diagnostics')
+	@ApiOperation({
+		summary: 'Get Stellar order diagnostics',
+		description:
+			'Returns bridge order state, on-chain memo matches, and webhook metadata for payment troubleshooting.',
+	})
+	@ApiResponse({
+		status: 200,
+		description: 'Diagnostics retrieved successfully.',
+	})
+	async getStellarOrderDiagnostics(@Param('reference') reference: string) {
+		return this.orderService.getStellarOrderDiagnostics(reference);
 	}
 
 	@Post('stellar/:reference/verify-transaction')

@@ -69,10 +69,8 @@ constructor(private readonly authService: AuthService) {}
     // Decode Base64 clientId:clientSecret
     const decoded = Buffer.from(credentials, 'base64').toString('utf-8');
     const [clientId, clientSecret] = decoded.split(':');
-    console.log(`Received token request with clientId: ${clientId} clientSecret: ${clientSecret}`);
 
     const token = this.authService.generateToken(clientId, clientSecret);
-    console.log(`Generated token: ${token.token} expiresAt: ${new Date(token.expiresAt).toISOString()}`);
     return {
       access_token: token.token,
       token_type: 'Bearer',

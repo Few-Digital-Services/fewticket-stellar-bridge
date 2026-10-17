@@ -21,15 +21,19 @@ import { BridgeWebhookModule } from './bridge-webhook/bridge-webhook.module';
 
 type RuntimeEnvironment = 'sandbox' | 'live';
 
-const resolveEnvFilePaths = (): string[] => {
-  const rawEnv = String(process.env.APP_ENV ?? 'sandbox').toLowerCase();
-  const runtimeEnv: RuntimeEnvironment = rawEnv === 'live' ? 'live' : 'sandbox';
+const resolveRuntimeEnv = (rawEnv: string): RuntimeEnvironment => {
+  const normalized = rawEnv.toLowerCase();
+  if (normalized === 'live' || normalized === 'production') {
+    return 'live';
+  }
+  return 'sandbox';
+};
 
-  return [
-    `.env.${runtimeEnv}`,
-    'src/.env',
-    '.env',
-  ];
+const resolveEnvFilePaths = (): string[] => {
+  const rawEnv = String(process.env.APP_ENV ?? 'sandbox');
+  const runtimeEnv = resolveRuntimeEnv(rawEnv);
+
+  return [`.env.${runtimeEnv}`, 'src/.env', '.env'];
 };
 
 const buildDatabaseOptions = (configService: ConfigService) => {
