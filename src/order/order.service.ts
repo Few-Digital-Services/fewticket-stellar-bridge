@@ -147,7 +147,8 @@ export class OrderService {
 				const order = await manager.create(OrderEntity, {
 					reference: dto.reference,
 					faitAmount: String(faitAmount),
-					assetAmount: '0',
+					// Expected USDC: explicit asset_amount if sent, else 1:1 for USD deposits (Bridge converts USD->USDC 1:1).
+					assetAmount: this.expectedVirtualAccountAsset(dto),
 					faitCurrency: dto.fait_currency,
 					currency: 'usdc',
 					network: 'stellar',
@@ -451,7 +452,7 @@ export class OrderService {
 				.getRawOne<{ total: string }>();
 
 			const paidAmount = new Decimal(String(sumRow?.total ?? '0'));
-			const expectedAmount = new Decimal(String(locked.assetAmount ?? '0'));
+			const expectedAmount = this.effectiveExpectedAmount(locked);
 			const wasPaid = locked.status === OrderStatus.PAID;
 
 			locked.paidAmount = paidAmount.toFixed(6);
@@ -652,8 +653,10 @@ export class OrderService {
 					reference: order.reference,
 					transaction_hash: transactionHash,
 					memo: memo || order.memo,
-					// asset_amount stays the EXPECTED amount so the current Laravel handler is unchanged.
-					asset_amount: order.assetAmount,
+					// Stellar checkout: asset_amount stays the EXPECTED amount (Laravel handler unchanged).
+					// Bridge virtual account (bank transfer): report USDC ACTUALLY received on-chain for this memo.
+					asset_amount: order.serviceType === ServiceType.BRIDGE_VIRTUAL_ACCOUNT ? order.paidAmount : order.assetAmount,
+					service_type: order.serviceType,
 					expected_asset_amount: order.assetAmount,
 					// Actual on-chain amount received for this order (sum of linked credits).
 					received_asset_amount: order.paidAmount,
@@ -767,6 +770,34 @@ export class OrderService {
 					: null,
 			},
 		};
+	}
+
+	/** Expected USDC for a new virtual-account order. */
+	private expectedVirtualAccountAsset(dto: CreateBridgeVirtualAccountOrderDto): string {
+		if (dto.asset_amount !== undefined && dto.asset_amount !== null && Number(dto.asset_amount) > 0) {
+			return new Decimal(String(dto.asset_amount)).toFixed(6);
+		}
+		if (String(dto.fait_currency ?? '').toUpperCase() === 'USD' && Number(dto.fait_amount) > 0) {
+			return new Decimal(String(dto.fait_amount)).toFixed(6);
+		}
+		return '0';
+	}
+
+	/**
+	 * Amount that counts as fully paid. For bank-transfer (virtual account) orders, allow the small
+	 * shortfall Bridge deposit fees cause: max(min, pct% of expected), capped. Config via env.
+	 */
+	private effectiveExpectedAmount(order: OrderEntity): Decimal {
+		const expected = new Decimal(String(order.assetAmount ?? '0'));
+		if (order.serviceType !== ServiceType.BRIDGE_VIRTUAL_ACCOUNT || expected.lte(0)) {
+			return expected;
+		}
+		const pct = new Decimal(process.env.BANK_TRANSFER_SHORTFALL_PCT ?? '2');
+		const min = new Decimal(process.env.BANK_TRANSFER_SHORTFALL_MIN ?? '0.05');
+		const cap = new Decimal(process.env.BANK_TRANSFER_SHORTFALL_CAP ?? '0.50');
+		const tol = Decimal.min(cap, Decimal.max(min, expected.mul(pct).div(100)));
+		const eff = expected.minus(tol);
+		return eff.gt(0) ? eff : new Decimal(0);
 	}
 
 	async verifyTransaction(

@@ -19,6 +19,11 @@ export class CreateBridgeVirtualAccountOrderDto {
   @IsNumber({ maxDecimalPlaces: 6 })
   fait_amount?: number;
 
+  @ApiPropertyOptional({ example: '1.62', description: 'Expected USDC to receive (optional; defaults to fait_amount for USD)' })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 7 })
+  asset_amount?: number;
+
   @ApiProperty({ example: 'NGN' })
   @IsString()
   @MaxLength(10)
