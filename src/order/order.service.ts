@@ -792,9 +792,9 @@ export class OrderService {
 		if (order.serviceType !== ServiceType.BRIDGE_VIRTUAL_ACCOUNT || expected.lte(0)) {
 			return expected;
 		}
-		const pct = new Decimal(process.env.BANK_TRANSFER_SHORTFALL_PCT ?? '2');
-		const min = new Decimal(process.env.BANK_TRANSFER_SHORTFALL_MIN ?? '0.05');
-		const cap = new Decimal(process.env.BANK_TRANSFER_SHORTFALL_CAP ?? '0.50');
+		const pct = new Decimal(process.env.BANK_TRANSFER_SHORTFALL_PCT ?? '0');
+		const min = new Decimal(process.env.BANK_TRANSFER_SHORTFALL_MIN ?? '0');
+		const cap = new Decimal(process.env.BANK_TRANSFER_SHORTFALL_CAP ?? '0');
 		const tol = Decimal.min(cap, Decimal.max(min, expected.mul(pct).div(100)));
 		const eff = expected.minus(tol);
 		return eff.gt(0) ? eff : new Decimal(0);
