@@ -469,6 +469,17 @@ export class StellarService implements OnModuleInit {
 	}
 
 
+	/**
+	 * Recent incoming payments to `accountPublicKey` whose transaction memo
+	 * equals `memo`.
+	 *
+	 * Horizon payment records do not include the memo. Loading each payment's
+	 * transaction one-by-one is one HTTP round trip per USDC payment (hundreds
+	 * of sequential calls once the platform wallet is busy) and cannot run on
+	 * the checkout request path. `join=transactions` side-loads the memo in
+	 * the same payments page. If a record has no embedded transaction, memos
+	 * are resolved from a single account-transactions page — never per hash.
+	 */
 	async findPaymentsMatchingMemo(
 		accountPublicKey: string,
 		memo: string,
@@ -506,7 +517,14 @@ export class StellarService implements OnModuleInit {
 			.forAccount(accountPublicKey)
 			.order('desc')
 			.limit(limit)
+			.join('transactions')
 			.call();
+
+		const candidates: Array<{
+			record: any;
+			currency: string;
+		}> = [];
+		let needsMemoIndex = false;
 
 		for (const payment of page.records ?? []) {
 			const record = payment as any;
@@ -528,38 +546,101 @@ export class StellarService implements OnModuleInit {
 				continue;
 			}
 
-			try {
-				const tx = await this.server
-					.transactions()
-					.transaction(String(record.transaction_hash))
-					.call();
-
-				const txMemo = tx.memo ? String(tx.memo).trim() : '';
-				if (txMemo !== normalizedMemo) {
-					continue;
-				}
-
-				matches.push({
-					transactionHash: String(record.transaction_hash),
-					amount: String(record.amount),
-					memo: txMemo,
-					currency,
-					from: String(record.from),
-					to: String(record.to),
-					createdAt: record.created_at
-						? String(record.created_at)
-						: tx.created_at
-							? String(tx.created_at)
-							: null,
-				});
-			} catch (error) {
-				this.logger.warn(
-					`Unable to load transaction ${record.transaction_hash} during memo reconciliation: ${this.stringifyError(error)}`,
-				);
+			candidates.push({ record, currency });
+			if (!this.joinedTransaction(record)) {
+				needsMemoIndex = true;
 			}
 		}
 
+		const memoIndex = needsMemoIndex
+			? await this.loadRecentTransactionMemos(accountPublicKey, limit)
+			: null;
+
+		if (needsMemoIndex) {
+			this.logger.warn(
+				`Horizon payments for ${accountPublicKey} did not include joined transactions; resolved memos from one transactions page`,
+			);
+		}
+
+		for (const { record, currency } of candidates) {
+			const joined = this.joinedTransaction(record);
+			const indexed = memoIndex?.get(String(record.transaction_hash));
+			const txMemo = joined
+				? joined.memo != null
+					? String(joined.memo).trim()
+					: ''
+				: indexed?.memo ?? null;
+
+			if (txMemo === null || txMemo !== normalizedMemo) {
+				continue;
+			}
+
+			const createdAt = record.created_at
+				? String(record.created_at)
+				: joined?.created_at
+					? String(joined.created_at)
+					: indexed?.createdAt ?? null;
+
+			matches.push({
+				transactionHash: String(record.transaction_hash),
+				amount: String(record.amount),
+				memo: txMemo,
+				currency,
+				from: String(record.from),
+				to: String(record.to),
+				createdAt,
+			});
+		}
+
 		return matches;
+	}
+
+	/**
+	 * Transaction object side-loaded by Horizon `join=transactions`.
+	 * stellar-sdk stores that object on `transaction_attr` and replaces
+	 * `transaction` with a link function; calling the function would refetch.
+	 */
+	private joinedTransaction(
+		record: any,
+	): { memo?: unknown; created_at?: unknown } | null {
+		const attr = record?.transaction_attr;
+		if (attr && typeof attr === 'object') {
+			return attr;
+		}
+
+		const embedded = record?.transaction;
+		if (embedded && typeof embedded === 'object') {
+			return embedded;
+		}
+
+		return null;
+	}
+
+	private async loadRecentTransactionMemos(
+		accountPublicKey: string,
+		limit: number,
+	): Promise<Map<string, { memo: string; createdAt: string | null }>> {
+		const page = await this.server
+			.transactions()
+			.forAccount(accountPublicKey)
+			.order('desc')
+			.limit(limit)
+			.call();
+
+		const memos = new Map<string, { memo: string; createdAt: string | null }>();
+		for (const tx of page.records ?? []) {
+			const record = tx as any;
+			const hash = String(record.hash ?? '');
+			if (!hash) {
+				continue;
+			}
+			memos.set(hash, {
+				memo: record.memo != null ? String(record.memo).trim() : '',
+				createdAt: record.created_at ? String(record.created_at) : null,
+			});
+		}
+
+		return memos;
 	}
 
 	private stringifyError(value: unknown): string {

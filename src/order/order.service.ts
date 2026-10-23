@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -49,8 +49,13 @@ type ApplyIncomingPaymentResult =
 	| 'duplicate'
 	| 'overpaid';
 
+/** Bound idempotent create so a slow Horizon lookup cannot outlive Laravel's 15s cURL timeout. */
+const DEFAULT_CREATE_RECONCILE_TIMEOUT_MS = 4000;
+
 @Injectable()
 export class OrderService {
+	private readonly logger = new Logger(OrderService.name);
+
 	constructor(
 		@InjectRepository(OrderEntity)
 		private readonly orderRepo: Repository<OrderEntity>,
@@ -315,7 +320,10 @@ export class OrderService {
 		});
 
 		if (existingReference) {
-			const reconciled = await this.reconcileExistingOnChainPayment(existingReference);
+			// Same reference returns the original memo and address. A short
+			// reconcile can still attach a payment the listener missed; it must
+			// not block checkout if Horizon is slow.
+			const reconciled = await this.reconcileForIdempotentCreate(existingReference);
 			return this.buildStellarOrderResponse(reconciled);
 		}
 
@@ -335,8 +343,58 @@ export class OrderService {
 		order.serviceType = ServiceType.STELLAR;
 
 		const savedOrder = await this.orderRepo.save(order);
-		const reconciled = await this.reconcileExistingOnChainPayment(savedOrder);
-		return this.buildStellarOrderResponse(reconciled);
+		// The memo is a fresh random value that is not revealed until this
+		// response. No payer can have submitted it yet, so scanning Horizon
+		// here only adds latency (and previously exceeded the client timeout).
+		return this.buildStellarOrderResponse(savedOrder);
+	}
+
+	/**
+	 * Idempotent create-by-reference may race a payment that the stream listener
+	 * has not applied yet. Wait briefly for that lookup, then return the stored
+	 * order so the caller still receives payment instructions. The lookup keeps
+	 * running after the deadline and remains idempotent with the listener.
+	 */
+	private async reconcileForIdempotentCreate(order: OrderEntity): Promise<OrderEntity> {
+		const timeoutMs = this.createReconcileTimeoutMs();
+		let timer: ReturnType<typeof setTimeout> | undefined;
+
+		const timeout = new Promise<OrderEntity>((resolve) => {
+			timer = setTimeout(() => {
+				this.logger.warn(
+					`On-chain reconcile for order ${order.reference} exceeded ${timeoutMs}ms; returning the stored order`,
+				);
+				resolve(order);
+			}, timeoutMs);
+		});
+
+		const work = this.reconcileExistingOnChainPayment(order).then(
+			(reconciled) => reconciled,
+			(error: unknown) => {
+				this.logger.warn(
+					`On-chain reconcile failed for order ${order.reference}: ${error instanceof Error ? error.message : String(error)}`,
+				);
+				return order;
+			},
+		);
+
+		try {
+			return await Promise.race([work, timeout]);
+		} finally {
+			if (timer) {
+				clearTimeout(timer);
+			}
+		}
+	}
+
+	private createReconcileTimeoutMs(): number {
+		const raw = Number(
+			process.env.STELLAR_CREATE_RECONCILE_TIMEOUT_MS ?? DEFAULT_CREATE_RECONCILE_TIMEOUT_MS,
+		);
+		if (!Number.isFinite(raw) || raw <= 0) {
+			return DEFAULT_CREATE_RECONCILE_TIMEOUT_MS;
+		}
+		return raw;
 	}
 
 	async markAsPaid(order: OrderEntity) {
